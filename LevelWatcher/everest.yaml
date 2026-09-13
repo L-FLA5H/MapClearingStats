@@ -1,0 +1,7 @@
+- Name: LevelWatcher
+  Version: 0.1.0
+  Author: L_FLA5H
+  DLL: bin/LevelWatcher.dll
+  Dependencies:
+    - Name: EverestCore
+      Version: 1.5935.0
