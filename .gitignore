@@ -370,3 +370,6 @@ MigrationBackup/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 开发用的离线预览页（headless 截图自检工具，不属于发布产物）
+/_preview/
