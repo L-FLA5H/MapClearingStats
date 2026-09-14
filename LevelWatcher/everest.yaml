@@ -1,5 +1,5 @@
 - Name: LevelWatcher
-  Version: 0.1.0
+  Version: 0.2.0
   Author: L_FLA5H
   DLL: bin/LevelWatcher.dll
   Dependencies:

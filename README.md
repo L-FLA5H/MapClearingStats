@@ -19,7 +19,6 @@
 - 这是本人第一次做蔚蓝的相关工具，制作初心与其说是「制作好用的工具让大家一起来用」，不如说是「为自己直播间设计一个推图 UI，顺便看看有没有其他人用得到」，有什么设计缺陷还请多多包涵。
 - 本工具包含一个用于抓取游戏状态的单独 mod（[LevelWatcher](LevelWatcher/)）和几个可视化文件，本质上是对 CCT (ConsistencyTrackerMod) 中的悬浮层文件进行了修改。如要使用本工具，你需要先在任意的蔚蓝mod管理工具中安装 CCT。
 - 本工具的功能设计、测试与迭代由 [L_FLA5H](https://github.com/L_FLA5H) 完成，代码开发由 AI 完成。
-- 本工具目前存在一些计时逻辑上的问题，详见下方[缺陷](#缺陷)一节。
 - 如果 CCT 更新导致本工具出现异常，我会尽快修复。
 
 ## 功能
@@ -147,14 +146,13 @@ dotnet build -c Release
 dotnet build -p:CelestePrefix="D:\Steam\steamapps\common\Celeste"
 ```
 
-## 缺陷
+## 已知局限
 
-- 方格进度依赖 CCT 的路径录制，没录过路径的地图只会显示提示文字
+- 方格进度依赖 CCT 的路径录制，没录过路径的地图只会显示提示文字，不会出错
 - 数据存在浏览器会话里（`sessionStorage`），关掉浏览器后清空，不做跨会话的历史统计
-- 存在一些计时逻辑上的问题：蔚蓝中的地图状态实在太多，你可以**保存退出**、**重新开始此章节**、如果是合集图也许还能**返回地图但保存进度**，因此几乎不可能只靠我自己就将这些场景全部覆盖。本人已经尽力处理了大部分日常情况，但使用过程中仍可能遇到bug，届时请告知本人！感谢你的支持！
 
----
-
+> v0.2.0 已经集中修复了此前 README 列出的 6 个计时 bug（保存退出、重新开始此章节、
+> 返回地图选不保存进度、换图时间虚高等）。详见 [Release notes](docs/release-notes-v0.2.0.md)。
 ## 目录结构
 
 ```
@@ -174,7 +172,8 @@ MapClearingStats/
 │       └── LevelWatcherModuleSaveData.cs
 ├── docs/                     # 文档与截图
 │   ├── screenshot.png
-│   └── release-notes-v0.1.0.md
+│   ├── release-notes-v0.1.0.md
+│   └── release-notes-v0.2.0.md
 ├── LICENSE
 └── README.md
 ```
