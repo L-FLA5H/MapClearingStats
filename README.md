@@ -17,7 +17,7 @@
 ## 注意事项
 
 - 这是本人第一次做蔚蓝的相关工具，制作初心与其说是「制作好用的工具让大家一起来用」，不如说是「为自己直播间设计一个推图 UI，顺便看看有没有其他人用得到」，有什么设计缺陷还请多多包涵。
-- 本工具包含一个用于抓取游戏状态的单独 mod（[LevelWatcher](LevelWatcher/)）和几个可视化文件，本质上是对 CCT（[ConsistencyTracker](https://github.com/viddie/ConsistencyTrackerMod)）中的悬浮层文件进行了修改。如要使用本工具，你需要先安装 CCT。
+- 本工具包含一个用于抓取游戏状态的单独 mod（[LevelWatcher](LevelWatcher/)）和几个可视化文件，本质上是对 CCT (ConsistencyTrackerMod) 中的悬浮层文件进行了修改。如要使用本工具，你需要先在任意的蔚蓝mod管理工具中安装 CCT。
 - 本工具的功能设计、测试与迭代由 [L_FLA5H](https://github.com/L_FLA5H) 完成，代码开发由 AI 完成。
 - 本工具目前存在一些计时逻辑上的问题，详见下方[缺陷](#缺陷)一节。
 - 如果 CCT 更新导致本工具出现异常，我会尽快修复。
@@ -79,7 +79,7 @@ flowchart LR
 | --- | --- |
 | Celeste | Steam / itch.io 版本均可 |
 | Everest | 1.5935.0 或更高版本（见 `LevelWatcher/everest.yaml`） |
-| [ConsistencyTracker](https://github.com/viddie/ConsistencyTrackerMod) | 即 CCT，必装。本工具的数据全部来自它 |
+| [ConsistencyTracker] | 即 CCT，必装。本工具的数据全部来自它 |
 
 ### 第 1 步：安装 LevelWatcher
 
@@ -183,8 +183,8 @@ MapClearingStats/
 
 ## 致谢
 
-- [Everest](https://github.com/EverestAPI/Everest) —— 蔚蓝的 Mod 加载器与 API，本工具运行的基础
-- [ConsistencyTracker](https://github.com/viddie/ConsistencyTrackerMod) —— 数据来源。没有它，本工具无法得知房间列表与逐房间的死亡 / 用时
+- [Everest] —— 蔚蓝的 Mod 加载器与 API，本工具运行的基础
+- [ConsistencyTracker] —— 数据来源。没有它，本工具无法得知房间列表与逐房间的死亡 / 用时
 
 ## 声明
 
