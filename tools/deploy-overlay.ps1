@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 # --- target: the real overlay folder the game reads ---
 $DST = "D:\Steam\steamapps\common\Celeste\ConsistencyTracker\external-tools\ExternalOverlay"
-$FILES = @("CCTOverlay.js", "CCTOverlay.css", "CCTOverlay.html")
+$FILES = @("Timing.js", "CCTOverlay.js", "CCTOverlay.css", "CCTOverlay.html")
 
 # --- source: derive it from this script's own location ---
 # This script lives in <repo>\tools\, so the overlay is <repo>\ExternalOverlay.
