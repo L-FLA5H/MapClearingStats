@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="CCTOverlay.css">
+</head>
+<body>
+    <div id="app">
+
+        <div id="status-overlay">
+            <div class="status-box">
+                <span class="status-label">当前状态：</span>
+                <span class="status-value" id="status-value">加载中</span>
+            </div>
+        </div>
+
+        <div class="card top-card">
+            <div class="top-left">
+                <div class="chapter-name" id="chapter-name">-</div>
+                <div class="room-name-inline" id="room-name-inline">-</div>
+            </div>
+            <div class="top-divider"></div>
+            <div class="top-right">
+                <div class="total-line">
+                    <span class="total-label">总死亡</span>
+                    <span class="total-deaths" id="total-deaths">0</span>
+                </div>
+                <div class="total-line">
+                    <span class="total-label">总用时</span>
+                    <span class="total-time" id="total-time">00:00:00.000</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card room-info-card" id="room-info-card">
+            <div class="room-info-block">
+                <span class="icon">💀</span>
+                <span class="label">本面死亡</span>
+                <span class="value" id="room-deaths">0</span>
+            </div>
+            <div class="room-info-block">
+                <span class="icon">⏱️</span>
+                <span class="label">本面用时</span>
+                <span class="time-value" id="room-time">00:00.000</span>
+            </div>
+        </div>
+
+        <div class="card sections-card" id="sections-card">
+            <div class="sections-left">
+                <div class="progress-title">进度</div>
+                <div class="progress-line">小节 <span id="cp-progress">-</span></div>
+                <div class="progress-line">房间 <span id="room-progress">-</span></div>
+            </div>
+            <div class="sections-right" id="sections"></div>
+        </div>
+
+        <div class="notice" id="notice" style="display:none;"></div>
+    </div>
+    <script src="CCTOverlay.js"></script>
+</body>
+</html>
