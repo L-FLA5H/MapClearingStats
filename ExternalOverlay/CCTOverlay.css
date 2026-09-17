@@ -25,10 +25,14 @@ html, body {
     background: linear-gradient(135deg, #2a2a31 0%, #17171a 60%, #101013 100%);
     border-radius: 12px;
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 10px 32px rgba(0,0,0,0.9), 0 2px 10px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.08);
+    box-shadow: 0 16px 44px rgba(0,0,0,1),
+                0 6px 18px rgba(0,0,0,0.92),
+                0 0 0 1px rgba(0,0,0,0.55),
+                inset 0 1px 0 rgba(255,255,255,0.08);
     box-sizing: border-box;
     overflow: hidden;
-    transition: filter 0.4s ease, opacity 0.4s ease;
+    transition: filter 0.4s ease, opacity 0.4s ease,
+                border-color 0.34s ease, box-shadow 0.34s ease;
     position: relative;
 }
 
@@ -74,7 +78,7 @@ html, body {
 .top-card {
     display: flex;
     align-items: center;
-    padding: 18px 24px;
+    padding: 13px 22px;
 }
 .top-left {
     display: flex;
@@ -94,7 +98,7 @@ html, body {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 6px;
+    gap: 3px;
     flex: 1 1 0;
     padding-left: 18px;
 }
@@ -102,7 +106,9 @@ html, body {
 .chapter-name {
     font-weight: 900;
     color: #fff;
-    text-shadow: 0 0 20px rgba(255,255,255,0.55), 2px 2px 0 rgba(0,0,0,0.9);
+    /* 原来是一圈 20px 的白色光晕，粗体大字下会糊成一块「白底」。
+       改成很淡的近距离柔光 + 一层向下投影，字口更干净。 */
+    text-shadow: 0 0 7px rgba(255,255,255,0.22), 0 2px 5px rgba(0,0,0,0.85);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -161,6 +167,25 @@ html, body {
     text-align: right;
     text-shadow: 0 0 12px rgba(78,205,196,0.45);
 }
+/* 平均死亡 / 平均用时：小一号，作为「总死亡 / 总用时」的补充信息 */
+.avg-line {
+    font-size: 14px;
+    font-weight: 700;
+    color: #8a8a8a;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    margin-top: 0;
+    line-height: 1.35;
+}
+.avg-line .avg-label { color: #868686; }
+.avg-line b {
+    color: #a9e3dd;
+    font-weight: 800;
+    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+.avg-line .avg-sep { color: #4e4e4e; font-style: normal; margin: 0 6px; }
 
 /* ===== 第二行 ===== */
 .room-info-card {
@@ -260,6 +285,9 @@ html, body {
     padding: 2px 2px;
     transition: all 0.3s ease;
 }
+/* 当前小节要展示方格，给它更多横向空间（其余小节只需显示一个数字）。
+   不给的话 6 个小节均分，当前小节只剩 ~59px，7 个方格会被压成 5px。 */
+.sections-right:not(.single) .section.current { flex-grow: 3; }
 .section .name {
     font-size: 17px;
     font-weight: 700;
@@ -300,19 +328,27 @@ html, body {
     gap: 3px;
     align-items: center;
     margin-top: 2px;
+    width: 100%;
     transition: all 0.3s ease;
 }
+/* 方格宽度按「本行有几个」算出来，永远塞得下；--bs-max 是上限，防止单行时撑得过大。
+   （不用 flex 收缩：max-width:100% + flex-shrink 会形成循环依赖，方格会塌成 0） */
 .blocks-row {
+    --gap: 3px;
     display: flex;
     flex-direction: row;
-    gap: 3px;
+    gap: var(--gap);
     justify-content: center;
+    align-items: center;
+    width: 100%;
 }
 .block {
-    width: 14px;
-    height: 14px;
+    --bs-max: 14px;
+    width: calc((100% - (var(--per-row, 5) - 1) * var(--gap, 3px)) / var(--per-row, 5));
+    max-width: var(--bs-max);
+    aspect-ratio: 1 / 1;
+    min-width: 0;
     border-radius: 3px;
-    flex: 0 0 auto;
     transition: background 0.3s, box-shadow 0.3s, transform 0.3s;
 }
 .block.gray   { background: #333; }
@@ -364,10 +400,10 @@ html, body {
 
 .sections-right.single { justify-content: center; align-items: center; }
 .sections-right.single .section { flex: 1 1 auto; width: 100%; align-items: center; justify-content: center; }
-.sections-right.single .blocks .block { width: 28px; height: 28px; border-radius: 4px; }
-.sections-right.single.rooms-medium .blocks .block { width: 22px; height: 22px; }
-.sections-right.single.rooms-large  .blocks .block { width: 16px; height: 16px; }
-.sections-right.single.rooms-huge   .blocks .block { width: 12px; height: 12px; }
+.sections-right.single .blocks .block { --bs-max: 28px; border-radius: 4px; }
+.sections-right.single.rooms-medium .blocks .block { --bs-max: 22px; }
+.sections-right.single.rooms-large  .blocks .block { --bs-max: 16px; }
+.sections-right.single.rooms-huge   .blocks .block { --bs-max: 12px; }
 
 .sections-outside {
     width: 100%;
@@ -391,3 +427,127 @@ html, body {
 }
 
 .notice { font-size: 13px; color: #ff8c42; padding: 2px 6px; }
+
+/* ============================================================
+   动效与完成度增强
+   ============================================================ */
+
+/* ---- 1. 卡片入场：依次淡入上浮 ---- */
+.top-card       { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.room-info-card { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.09s both; }
+.sections-card  { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both; }
+@keyframes cardIn {
+    0%   { opacity: 0; transform: translateY(16px) scale(0.975); }
+    100% { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+/* ---- 2. 黄色方格：持续呼吸光晕（只动 box-shadow，不抢 transform）---- */
+.block.yellow { animation: breathe 1.9s ease-in-out infinite; }
+@keyframes breathe {
+    0%, 100% { box-shadow: 0 0 9px  rgba(241,196,15,0.55); }
+    50%      { box-shadow: 0 0 24px rgba(241,196,15,1); }
+}
+.block.yellow.enter {
+    animation: blockInYellow 0.4s ease-out both, breathe 1.9s ease-in-out infinite;
+}
+
+/* ---- 3. 方格刚被攻克：爆闪一下（黄 → 绿）---- */
+.block.green.burst { animation: burst 0.62s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes burst {
+    0%   { transform: scale(1);    background: #f1c40f; box-shadow: 0 0 14px rgba(241,196,15,1); }
+    35%  { transform: scale(1.6);  background: #e9ffe9; box-shadow: 0 0 24px rgba(126,201,138,1); }
+    100% { transform: scale(1);    background: #7ec98a; box-shadow: 0 0 6px  rgba(126,201,138,0.4); }
+}
+
+/* ---- 4. 死亡时顶部卡片红光一闪（只动边框和辉光，不位移）---- */
+/* 原来用 translateX 抖动整张卡，在大卡片上显得廉价，改成光效 */
+.card.death-flash {
+    border-color: rgba(255,92,92,0.62) !important;
+    box-shadow: 0 16px 44px rgba(0,0,0,1),
+                0 6px 18px rgba(0,0,0,0.92),
+                0 0 30px rgba(255,70,70,0.45),
+                inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+
+/* ---- 8. 小节切换：旧的向上飘出，新的从下方浮入（方向相反 = 接力感）----
+   ⚠️ 时长必须 ≤ JS 里替换元素的延迟，否则动画没播完元素就被删了 */
+.section.leaving { animation: sectionOut 0.2s cubic-bezier(0.4, 0, 0.7, 1) forwards; }
+@keyframes sectionOut {
+    0%   { opacity: 1; transform: translateY(0)     scale(1);    filter: brightness(1); }
+    100% { opacity: 0; transform: translateY(-18px) scale(0.76); filter: brightness(0.45); }
+}
+.section.entering { animation: sectionIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes sectionIn {
+    0%   { opacity: 0; transform: translateY(16px) scale(0.9); }
+    100% { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+/* ---- 9. 第三张卡片高度变化时缓动 ----
+   height:auto 没法直接 transition，所以由 JS 临时写成显式 px 再过渡 */
+.sections-card {
+    transition: filter 0.4s ease, opacity 0.4s ease,
+                border-color 0.34s ease, box-shadow 0.34s ease,
+                height 0.36s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---- 5. 攻下一个小节：卡片边缘扫过一道光 ---- */
+/* ⚠️ 必须给默认 opacity: 0 —— 动画没有 forwards，结束后元素仍在，
+      不隐藏的话会在卡片上残留一条绿色光带 */
+.sections-card.cleared-flash::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -50%;
+    width: 45%;
+    opacity: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(126,201,138,0.38), transparent);
+    animation: sweep 0.95s ease-out;
+}
+@keyframes sweep {
+    0%   { left: -50%; opacity: 0; }
+    18%  { opacity: 1; }
+    100% { left: 108%; opacity: 0; }
+}
+
+/* ---- 6. 底部贯穿进度条 ---- */
+.sections-card { position: relative; }
+.sections-progress {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 4px;
+    background: rgba(255,255,255,0.055);
+    overflow: hidden;
+}
+.sections-progress .fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4ecdc4 0%, #7ec98a 100%);
+    box-shadow: 0 0 10px rgba(78,205,196,0.85);
+    /* 不用 CSS transition：进度条和百分比数字由 JS 一起缓动，保证同步 */
+}
+
+/* ---- 7. 右侧总进度百分比 ---- */
+/* 固定宽度：数字从小数点后一位变化时（如 9.9% → 10.0%）不会挤动左边的方格 */
+.progress-pct {
+    flex: 0 0 auto;
+    width: 106px;
+    box-sizing: border-box;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 14px;
+    border-left: 2px solid rgba(255,255,255,0.08);
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    color: #4ecdc4;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    text-shadow: 0 0 14px rgba(78,205,196,0.5);
+    white-space: nowrap;
+}
+.progress-pct .unit { font-size: 16px; font-weight: 800; margin-left: 1px; color: #7adfd6; }
+.progress-pct.full { color: #7ec98a; text-shadow: 0 0 16px rgba(126,201,138,0.75); }
+.progress-pct.full .unit { color: #a8e6b0; }

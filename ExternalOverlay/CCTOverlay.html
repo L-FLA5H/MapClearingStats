@@ -29,6 +29,11 @@
                     <span class="total-label">总用时</span>
                     <span class="total-time" id="total-time">00:00:00.000</span>
                 </div>
+                <div class="avg-line">
+                    <span class="avg-label">平均死亡</span><b id="avg-deaths">-</b>
+                    <i class="avg-sep">·</i>
+                    <span class="avg-label">平均用时</span><b id="avg-time">-</b>
+                </div>
             </div>
         </div>
 
@@ -52,6 +57,8 @@
                 <div class="progress-line">房间 <span id="room-progress">-</span></div>
             </div>
             <div class="sections-right" id="sections"></div>
+            <div class="progress-pct" id="progress-pct">0<span class="unit">%</span></div>
+            <div class="sections-progress"><div class="fill" id="sections-fill"></div></div>
         </div>
 
         <div class="notice" id="notice" style="display:none;"></div>
