@@ -373,3 +373,8 @@ desktop.ini
 
 # 开发用的离线预览页（headless 截图自检工具，不属于发布产物）
 /_preview/
+
+# 诊断工具的临时输出（tools/diag.ps1、tools/watch.js 会写这些）
+tools/_diag.txt
+tools/_watch.log
+tools/_watch_stdout.txt

@@ -42,13 +42,204 @@ html, body {
     inset: 0;
     background: linear-gradient(120deg, rgba(94,179,255,0.08) 0%, transparent 40%, transparent 60%, rgba(78,205,196,0.06) 100%);
     pointer-events: none;
+    /* ⚠️ ::before 只负责这层**中性冷色打底**，不承担金 / 银色。
+       一命的颜色全部交给下面的 .card::after 扫光层 ——
+       两处都上色会叠成双倍浓度，看起来发脏。
+       （曾经把金色直接写在这里、靠 opacity 过渡来「镀」，
+         结果小闪看到的是「整张卡片先消失、金卡才出来」：
+         因为那是拿卡片自己的底色层当动画载体，抹掉底色 = 卡片消失。） */
+    opacity: 1;
+    transition: opacity 0.4s ease;
 }
+/* ---- 镀色扫光层 ----
+   小闪要的效果：
+     · 进入 ——「从左到右镀一层金 / 银」
+     · 退出 ——「扫到右边去」
 
-.card.blurred {
-    filter: blur(6px) brightness(0.55);
+   ⚠️⚠️ 这块试过三种做法，前两种都被否掉了，别再改回去：
+   第一次：一次性标记类把 ::before 压到 opacity:0，几帧后摘掉让它过渡回 1。
+           → 标记只活约 50ms、transition 是 0.4s，过渡走到 2.6% 就被打断，
+             采样 1 → 1 → 0.974 → 1，肉眼看不到颜色变化。
+   第二次：图层 translateX(-100%) 滑到 0，右边缘加一道亮带让扫光看得见。
+           → 能扫，但扫完之后**亮带永久停在卡片最右边**（小闪：「扫得没到位」）。
+   第三次：改用 mask-position 位移。终态干净了，但 mask 是**单向**的 ——
+           退出时只能原路退回，金色从右边先消失、**左边缘永远残留一截金边**
+           （小闪：「卡片左侧也会有一个浅浅的金边，这个应该是要扫到右边去的，
+           但是没完全藏好」）。试过调 mask-size 到 220% 让软边有落脚点，
+           仍然治不好 —— 这是方向限制，不是参数问题。
+
+   现在（正确）：**两段独立的关键帧动画，各走各的方向**。
+     · 图层本身是**均匀**的（没有亮带），终态干净；
+     · 进入用 flyInFromLeft（translateX -100% → 0，从左往右盖上来）；
+     · 退出用 flyOutToRight（translateX 0 → 100% + 渐隐，扫到右边去）。
+   两个方向互不干扰，也不会在左边缘留残影。 */
+.card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
     pointer-events: none;
+    /* 均匀金色。银色由 #app.silver-mode 覆盖 background */
+    background: linear-gradient(100deg,
+                rgba(241,196,15,0.072) 0%,
+                rgba(241,196,15,0.100) 100%);
+    transform: translateX(0);
+    opacity: 0;              /* 常态：整层透明，看不见 */
+    transition: none;        /* 常态不参与过渡 —— 进出都由下面的关键帧负责 */
+}
+#app.silver-mode .card::after,
+.card.silver-layer::after {
+    /* 银色原来太淡了（小闪：「带银的卡片镀银效果不明显」），
+       比金色往上提一点，同时保持冷色调。
+       ⚠️ 这里挂两个选择器：`.card.silver-layer` 是给**退出动画**用的 ——
+          退出时 #app 上的 .silver-mode 会被摘掉，图层会立刻回落到默认的金色，
+          于是小闪看到「带银死亡时突然镀成金的再淡出」。
+          所以 fly-out 期间给卡片挂上 .silver-layer 把银色锁住。 */
+    background: linear-gradient(100deg,
+                rgba(214,214,228,0.090) 0%,
+                rgba(222,222,236,0.122) 100%);
+}
+/* 一命模式：图层就位。飞入动画跑完后靠这条规则把终态定住。 */
+#app.golden-mode .card::after,
+#app.silver-mode .card::after {
+    opacity: 1;
 }
 
+/* ---- 扫光：进入 / 退出是**两个相反方向**，必须分开写 ----
+   小闪要的是：
+     · 进入 ——「从左到右镀一层」（金色从卡片左边缘盖上来）
+     · 退出 ——「扫到右边去」（金色往右滑走，从右边缘离开）
+
+   ⚠️⚠️ 这两个方向是**相反的**，一段过渡满足不了。
+   上一版用 mask-position 位移：进入方向对（左→右），
+   但退出时它只能原路退回 —— 金色从**右边**先消失、**左边缘永远残留一截金边**。
+   小闪截图确认过：「卡片左侧也会有一个浅浅的金边，这个应该是要扫到右边去的，
+   但是没完全藏好」。这不是参数没调好，是那个机制的方向限制。
+   所以改成两段独立的关键帧动画，各走各的方向。
+
+   ⚠️ 动画挂在卡片自己的持久类上（.fly-in / .fly-out），由 JS 加、
+      animationend 摘 —— 不要挂在 #app 的一次性标记类上，
+      那样标记一摘选择器就不匹配，浏览器会**立刻取消动画**
+      （这个坑在缩放动画上实测踩过，只跑了 57ms）。 */
+.card.fly-in::after {
+    animation: flyInFromLeft 0.55s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+@keyframes flyInFromLeft {
+    0%   { transform: translateX(-100%); opacity: 1; }
+    100% { transform: translateX(0);     opacity: 1; }
+}
+.card.fly-out::after {
+    animation: flyOutToRight 0.5s cubic-bezier(0.45, 0, 0.75, 0.4) both;
+}
+@keyframes flyOutToRight {
+    0%   { transform: translateX(0);     opacity: 1; }
+    100% { transform: translateX(100%);  opacity: 0; }
+}
+
+/* ---- 一命挑战：整块面板浅镀金 / 浅镀银 ---- */
+/* 用很低的透明度做「镀」的感觉，不能盖住卡片本身的深色质感 */
+#app.golden-mode .card {
+    border-color: rgba(241,196,15,0.30);
+    box-shadow: 0 16px 44px rgba(0,0,0,1),
+                0 6px 18px rgba(0,0,0,0.92),
+                0 0 0 1px rgba(241,196,15,0.16),
+                0 0 30px rgba(241,196,15,0.10),
+                inset 0 1px 0 rgba(255,255,255,0.10);
+}
+/* ⚠️ 金/银的**底色**不再改 ::before 了 —— 它现在只负责那层中性的冷色打底。
+   一命的颜色由独立的 ::after 扫光层承担（见上方 .card::after 那段）。
+   两处都上色会叠成双倍浓度，看起来发脏。 */
+#app.golden-mode .card::before,
+#app.silver-mode .card::before {
+    opacity: 0.5;      /* 压暗一点，让金色的扫光更清楚，但不至于让卡片「消失」 */
+}
+#app.silver-mode .card {
+    border-color: rgba(201,201,212,0.32);
+    box-shadow: 0 16px 44px rgba(0,0,0,1),
+                0 6px 18px rgba(0,0,0,0.92),
+                0 0 0 1px rgba(201,201,212,0.16),
+                0 0 30px rgba(201,201,212,0.09),
+                inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+/* ===== 一命模式切换的动效 =====
+   ⚠️ 这里曾经有一条 `.card.rush { animation: goldenCardIn }`（整面板缩放 + 上浮），
+      已经**删掉**了，别再往回加。原因：
+        · 小闪要的是「从左到右镀一层金/银 + 各卡片高度缓动 + 数据淡出淡入」，
+          缩放不是他要的效果，加进来只是噪音；
+        · 「镀金」这件事现在由 .card::after 的扫光承担（见上方 goldSweep）。
+   ⚠️ 同时也不要给 #app 加 transform —— #app 里有 position:absolute 的
+      模糊层和状态浮层，父级 transform 会把它们的定位基准一起改掉。 */
+
+/* ---- 卡片高度缓动 ----
+   一命模式会让三张卡片的高度都变（第一张换掉三行、第二张多出走势条、
+   第三张的小节格可能换行）。height:auto 没法做 transition，
+   所以高度由 JS 用 FLIP 量出来再补间（见 animateLayoutSwap()）。
+   这里把时长和曲线抽成变量，避免 JS 和 CSS 两边写得不一致。 */
+:root {
+    --card-dur: 0.42s;
+    --card-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --row-dur: 0.24s;
+}
+
+/* ---- 数据行的淡出 / 淡入 ----
+   小闪：「数据该消失的消失，该出现的出现」。
+   JS 在换布局前给这几块加 .row-out（淡出），
+   换完布局再摘掉（淡入），配合高度补间就是一次干净的交替。
+   只圈「会换数据的那几块」，不要整张卡片都淡 ——
+   否则房间名、章节名这些没变的东西也跟着闪。 */
+.row-fade {
+    transition: opacity var(--row-dur) ease;
+}
+.row-fade.row-out {
+    opacity: 0;
+}
+
+/* ---- 统一模糊层 ----
+   ⚠️ 不要再逐张卡片加 blur。
+   三张卡片的入场动画延迟不同（0s / 0.09s / 0.18s），
+   而且 .sections-card 额外有一条 height 过渡，
+   逐张加 filter 会让三张卡片的模糊进度对不上（看起来像「只有第三张糊了」）。
+   改成一块统一的遮罩盖住整个 #app，一次性模糊所有内容。
+
+   ⚠️⚠️ 这里曾经有个「非常明显的边框」bug，小闪反馈过。
+   根因是 inset: -20px —— 模糊层比 #app 大出 20px，
+   backdrop-filter 会连**面板外面那圈游戏画面**一起模糊，
+   于是面板边缘出现一圈颜色不同的「光晕/边框」，非常难看。
+   正确做法：inset: 0 让模糊层严格贴合面板边界。 */
+#app.blurred::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    backdrop-filter: blur(6px) brightness(0.72);
+    -webkit-backdrop-filter: blur(6px) brightness(0.72);
+    background: rgba(10, 10, 14, 0.12);
+    opacity: 1;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity 0.4s ease, backdrop-filter 0.4s ease;
+
+    /* ⚠️⚠️ 小闪两次反馈「模糊有个明显的方框边」，根因在这里。
+       backdrop-filter 的模糊区域边缘是**硬切**的：inset:0 让它恰好铺满
+       #app 这个矩形盒子，于是模糊区和外面的游戏画面之间出现一条笔直的边界。
+       而卡片本身是 12px 圆角、还有 4px 内边距 —— 直角边界和圆角内容对不上，
+       那条边就格外显眼。（之前把 inset 从 -20px 改成 0 只是把边界从面板外
+       挪到了面板边界上，并没有让边界消失。）
+
+       正确做法：给遮罩做**边缘羽化**，让模糊强度在边缘 24px 内渐隐到 0，
+       边界自然消失，看上去是一圈柔和的光晕而不是方框。
+       两条 linear-gradient 交叉（横向 × 纵向）才能得到四边都羽化的矩形；
+       单条 mask 只能羽化一个方向。 */
+    -webkit-mask-image:
+        linear-gradient(to right,  transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%),
+        linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-image:
+        linear-gradient(to right,  transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%),
+        linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+    mask-composite: intersect;
+}
+
+/* 状态浮层必须盖在模糊层（z-index 5）之上，否则「当前状态」几个字自己也被糊掉 */
 #status-overlay {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -58,7 +249,7 @@ html, body {
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.4s ease;
-    z-index: 10;
+    z-index: 20;
 }
 #status-overlay.visible { opacity: 1; }
 #status-overlay .status-box {
@@ -101,7 +292,54 @@ html, body {
     gap: 3px;
     flex: 1 1 0;
     padding-left: 18px;
+    position: relative;
 }
+
+/* ---- 一命挑战指示器：显眼地放在第一张卡片右上角 ---- */
+.golden-badge {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 11px 4px;
+    margin-bottom: 3px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+    color: #1a1400;
+    background: linear-gradient(135deg, #ffd95e 0%, #f1c40f 55%, #d4a80a 100%);
+    box-shadow: 0 0 16px rgba(241,196,15,0.75),
+                0 0 34px rgba(241,196,15,0.35),
+                inset 0 1px 0 rgba(255,255,255,0.6);
+}
+.golden-badge.visible { display: inline-flex; }
+/* 切换带金/带银时，徽章「弹」出来 ——
+   ⚠️ 这里不能用 transition：元素是从 display:none 变过来的，
+   浏览器不会为 display 变化做过渡（会直接跳到终态）。
+   用 animation 就没这个问题：类一加上，动画立刻从 0% 开始播。
+   JS 每次切换都会先摘掉 .pop 再强制重排，保证动画能重播。 */
+.golden-badge.pop { animation: badgePop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes badgePop {
+    0%   { opacity: 0; transform: scale(0.55) translateY(-4px); }
+    60%  { opacity: 1; transform: scale(1.12) translateY(0); }
+    100% { opacity: 1; transform: scale(1); }
+}
+.golden-badge .berry-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #3a2c00;
+    box-shadow: 0 0 6px rgba(0,0,0,0.5);
+    flex-shrink: 0;
+}
+#app.silver-mode .golden-badge {
+    color: #101018;
+    background: linear-gradient(135deg, #f2f2f8 0%, #c9c9d4 55%, #a8a8b4 100%);
+    box-shadow: 0 0 16px rgba(201,201,212,0.7),
+                0 0 34px rgba(201,201,212,0.3),
+                inset 0 1px 0 rgba(255,255,255,0.75);
+}
+#app.silver-mode .golden-badge .berry-dot { background: #4a4a58; }
 
 .chapter-name {
     font-weight: 900;
@@ -187,11 +425,111 @@ html, body {
 }
 .avg-line .avg-sep { color: #4e4e4e; font-style: normal; margin: 0 6px; }
 
+/* ===== 一命挑战专用：带金成功率 =====
+   初见模式下整行 display:none；
+   一命模式时把 .total-line（两条）和 #avg-line 都藏掉，只留这一行。
+   所以第一张卡片在一命模式下反而比初见更矮。 */
+.golden-line {
+    display: none;                 /* 默认隐藏，一命模式由 JS 打开 */
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+}
+.golden-label {
+    color: #c8c8c8;
+    font-size: 16px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.golden-rate {
+    color: #f1c40f;
+    font-weight: 800;
+    font-size: 26px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    text-shadow: 0 0 14px rgba(241,196,15,0.5);
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+/* 通过率高 → 偏绿；低 → 偏红。金银模式下也保留这个语义色，方便一眼判断手感 */
+.golden-rate.good { color: #4ecdc4; text-shadow: 0 0 14px rgba(78,205,196,0.5); }
+.golden-rate.bad  { color: #ff6b6b; text-shadow: 0 0 14px rgba(255,107,107,0.5); }
+
+/* ---- 带金数据「变了」的提示动画 ----
+   小闪：「带金过面时，对应数据变化时也要加上动画」。
+   数值一变就轻微放大 + 提亮一下，一眼能看出刷新了。
+
+   ⚠️ 只在**值真的变了**时才加这个类（见 writeGoldenStats 里的 changed 判断）。
+      不加判断的话，requestGoldenStats 每 1.5 秒的节流刷新会让它一直闪。
+   ⚠️ .golden-rate / .golden-sub 都是 flex 子项（父级 .golden-line / .golden-subline
+      是 display:flex），flex 子项会被块化，所以 transform 生效；
+      如果是普通 inline 元素，transform 是无效的。 */
+.golden-rate.bump,
+.golden-detail.bump,
+.golden-sub.bump {
+    /* 小闪：「带金数据变化改成依旧使用先快后慢的缓动」。
+       cubic-bezier(0.16, 1, 0.3, 1) 是标准的强 ease-out ——
+       起步快、尾巴慢，正好是「先快后慢」。
+       ⚠️ 之前用的是 cubic-bezier(0.34, 1.42, 0.64, 1)，那是**带回弹**的曲线
+          （1.42 让它在途中冲过头再退回来），不是先快后慢。 */
+    /* 小闪反馈「带金带银过面时，成功率等数据没有缓动变化」——
+       说明原来那版太含蓄了（scale 1.16 + brightness 1.55，0.5s 里一闪而过）。
+       加大幅度 + 加长一点，让它一眼能看见。 */
+    animation: goldenBump 0.62s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes goldenBump {
+    0%   { transform: scale(1)    translateY(0);    filter: brightness(1);   }
+    18%  { transform: scale(1.30) translateY(-1px); filter: brightness(2.3); }
+    100% { transform: scale(1)    translateY(0);    filter: brightness(1);   }
+}
+.golden-detail {
+    color: #868686;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+/* 带银模式：成功率的金色换成银灰，绿/红语义色保持不变 */
+#app.silver-mode .golden-rate { color: #d6d6e4; text-shadow: 0 0 14px rgba(214,214,228,0.5); }
+#app.silver-mode .golden-rate.good { color: #4ecdc4; text-shadow: 0 0 14px rgba(78,205,196,0.5); }
+#app.silver-mode .golden-rate.bad  { color: #ff6b6b; text-shadow: 0 0 14px rgba(255,107,107,0.5); }
+
+/* 副行：带金局数 · 本面进入。字号比主行小一档，不抢成功率的视觉权重。
+   ⚠️ 高度按 18px 预留（和 .avg-line 一致）——不预留的话，
+   数据从「-」变成真实数字时第一张卡片会跳高一下。 */
+.golden-subline {
+    display: none;                 /* 默认隐藏，一命模式由 JS 打开 */
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+    min-height: 18px;
+    line-height: 1.35;
+}
+.golden-sub {
+    color: #9a9a9a;
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+/* 有真实数据的那部分数字提亮一点，避免整行糊成一团灰 */
+.golden-sub b {
+    color: #d8d8d8;
+    font-weight: 800;
+    margin-left: 3px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+#app.silver-mode .golden-sub b { color: #d6d6e4; }
+
 /* ===== 第二行 ===== */
 .room-info-card {
     display: flex;
+    flex-direction: column;
+    padding: 16px 22px 13px;
+}
+.room-info-row {
+    display: flex;
     align-items: stretch;
-    padding: 16px 22px;
 }
 .room-info-block {
     display: flex;
@@ -242,6 +580,192 @@ html, body {
     0%   { transform: scale(1); color: inherit; }
     45%  { transform: scale(1.35); color: #ff3b3b; }
     100% { transform: scale(1); color: inherit; }
+}
+
+/* ===== 近期表现走势条（第二张卡片底部）===== */
+.streak-strip {
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    display: none;          /* 没有数据时整条隐藏 */
+}
+.streak-strip.visible { display: block; }
+
+/* ===== 一命模式：整体收紧，压低总高度 =====
+   小闪要求「保证总高度不要太高」。
+   一命模式下去掉了三行数据，但卡片 padding 是按三行设计的，会留空白。
+   ⚠️ 必须写在基础规则（.top-card / .room-info-card / .streak-strip）之后，
+   否则被覆盖（同优先级下靠后的生效）。 */
+#app.golden-mode .top-card { padding: 10px 22px; }
+#app.golden-mode .room-info-card { padding: 10px 22px 11px; }
+#app.golden-mode .streak-strip {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+/* 一命模式下走势条上方没有兄弟元素，底部的「较早←最近」提示行也可以更紧 */
+#app.golden-mode .streak-head { margin-bottom: 4px; min-height: 16px; }
+/* 一命模式下走势条底部的「方向提示 + 通过率」去掉 ——
+   通过率已经挪到第一张卡片的「带金成功率」行，这里留着是重复信息，
+   而且能省下一整行高度。 */
+#app.golden-mode .streak-foot { display: none; }
+
+.streak-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    min-height: 17px;
+}
+.streak-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #868686;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+/* 标题前的草莓小圆点：金色（带银时由 #app.silver-mode 换成银灰） */
+.berry-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f1c40f;
+    box-shadow: 0 0 8px rgba(241,196,15,0.85);
+    flex-shrink: 0;
+    font-style: normal;
+}
+.streak-stat { font-size: 14px; color: #9a9a9a; font-weight: 700; }
+.streak-stat b {
+    color: #f1c40f;
+    font-size: 17px;
+    font-weight: 800;
+    margin: 0 2px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+.streak-strip.hot .streak-stat b { text-shadow: 0 0 12px rgba(241,196,15,0.7); }
+/* 「连续通过 2 / 最高 5」中间的分隔符（小闪要学 CCT 的格式） */
+.streak-sep {
+    font-style: normal;
+    color: #5c5c66;
+    margin: 0 4px;
+}
+/* 一命模式下还没有尝试记录时的占位文字。
+   ⚠️ 有了它，第二张卡片就不会在没数据时变成空白。 */
+.streak-empty {
+    color: #6a6a74;
+    font-size: 13px;
+    font-weight: 700;
+}
+/* 带银时连续成功数字换银色调 */
+#app.silver-mode .streak-stat b { color: #d8d8e2; }
+#app.silver-mode .streak-strip.hot .streak-stat b { text-shadow: 0 0 12px rgba(216,216,226,0.7); }
+
+/* 方块行：较早 [■■■…■■■] 近期 */
+.streak-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.streak-edge {
+    flex: 0 0 auto;
+    color: #5a5a64;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+.streak-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 16px;
+    /* 占满中间剩下的宽度（两侧是「较早 / 近期」标签） */
+    flex: 1 1 auto;
+    /* ⚠️ 小闪：「第二张卡片右边连续通过的地方有点空」。
+       圆点原来固定 9px、左对齐，19 个只占卡片宽度的三分之一，右边一大片空白。
+       改成 space-between 把方块铺开，整行撑满。 */
+    justify-content: space-between;
+}
+/* 小闪：「把圆点换成风格一致的方块」——
+   原来是 border-radius:50% 的圆，现在改成小圆角方块，
+   和卡片本身的圆角风格统一。尺寸也放大一点，方块比圆点更需要视觉重量。 */
+.streak-dot {
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    background: #4a4a52;
+    border: 1px solid transparent;   /* 空心状态要用到，先占住位置避免尺寸跳变 */
+    /* ⚠️ 小闪：「近期通过情况的方格只有进入动画，没有退出动画」。 */
+    /*    根因是 JS 那边每次都重建节点 —— 现在改成复用节点， */
+    /*    再配合这里的 transition，颜色/边框两个方向都会平滑过渡。 */
+    transition: background 0.32s ease, border-color 0.32s ease,
+                transform 0.28s ease, box-shadow 0.28s ease;
+}
+/* 数据不足 20 次时，在**左边**补的空位。
+   画成空心方块，一眼能看出「这几次还没数据」。 */
+.streak-dot.empty {
+    background: transparent;
+    border: 1px solid #33333c;
+}
+.streak-dot.ok {
+    background: #7ec98a;
+    box-shadow: 0 0 7px rgba(126,201,138,0.6);
+}
+.streak-dot.fail {
+    background: #e05a5a;
+    box-shadow: 0 0 6px rgba(224,90,90,0.45);
+}
+/* 最新那一次放大一点，视线自然落到「刚刚」 */
+.streak-dot.newest {
+    width: 12px;
+    height: 12px;
+    box-shadow: 0 0 12px currentColor;
+}
+.streak-dot.newest.ok   { background: #9ee0a8; box-shadow: 0 0 13px rgba(126,201,138,0.95); }
+.streak-dot.newest.fail { background: #ff7070; box-shadow: 0 0 12px rgba(224,90,90,0.8); }
+
+/* 新点入场：从 0 弹出来 */
+@keyframes dotPop {
+    0%   { transform: scale(0); opacity: 0; }
+    60%  { transform: scale(1.35); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+.streak-dot.pop { animation: dotPop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* 点太多时省略号 */
+.streak-more {
+    flex: 0 0 auto;
+    color: #5c5c5c;
+    font-size: 14px;
+    font-weight: 800;
+    padding: 0 2px;
+    letter-spacing: 1px;
+}
+
+.streak-rate {
+    font-size: 13px;
+    font-weight: 700;
+    color: #4ecdc4;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    flex-shrink: 0;
+    margin-left: 10px;
+}
+.streak-rate.good { color: #7ec98a; }
+.streak-rate.bad  { color: #e05a5a; }
+
+/* 走势条底部行（方向提示 + 通过率）。一命模式下由 #app.golden-mode 隐藏。 */
+.streak-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 5px;
+    margin-bottom: 0;
+    min-height: 16px;
 }
 
 /* ===== 第三行 ===== */
@@ -376,15 +900,37 @@ html, body {
     100% { transform: scale(1.25); }
 }
 
+/* 小节多的时候（> 6 个）压缩每个小块。
+   ⚠️ 这里曾经出过「小节名叠在一起」的 bug，原因有三层，缺一不可：
+     ① 小节之间只有 gap: 10px，但 .section 是 flex: 0 1 auto + min-width: 26px，
+        内容（名字）撑不下时**不会**被压缩到 26px 以下，而是直接溢出到邻居身上；
+     ② .section .name 虽然写了 text-overflow: ellipsis，但那是块级元素的规则，
+        在 flex 子项上要配合 min-width: 0 才生效；
+     ③ gap 在小节多的时候 10px 太宽，十几个小节光间隙就吃掉 100px+。
+   所以：把 gap 收窄、给 .section 和 .name 都显式加 min-width: 0 + overflow: hidden。 */
+.sections-right.many {
+    gap: 4px;
+}
 .sections-right.many .section {
     flex: 0 1 auto;
-    min-width: 26px;
+    /* ⚠️ min-width 必须是 0 而不是 26px —— 26px 是「不许被压」的下限，
+       名字比 26px 宽时它撑不下就往外溢，正是重叠的根因。 */
+    min-width: 0;
     max-width: 60px;
     padding: 2px 0;
+    overflow: hidden;
+}
+.sections-right.many .section .name,
+.sections-right.many .section .count {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .sections-right.many .section.current {
-    flex: 0 0 auto;
-    min-width: 110px;
+    flex: 0 1 auto;
+    min-width: 0;
     max-width: 140px;
 }
 .sections-right.many .section.dist-1 .name { font-size: 15px; color: #777; }
@@ -432,10 +978,22 @@ html, body {
    动效与完成度增强
    ============================================================ */
 
-/* ---- 1. 卡片入场：依次淡入上浮 ---- */
-.top-card       { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.room-info-card { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.09s both; }
-.sections-card  { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both; }
+/* ---- 1. 卡片入场：依次淡入上浮 ----
+   ⚠️⚠️ 这里以前是三条常驻的 `.top-card { animation: cardIn ... }`，是个隐患：
+   ① `animation` 是简写，带上 animation-name: cardIn 后会**永久**挂在卡片上；
+   ② 小闪要的「一命切换整面板弹一下」用的是 `#app.golden-enter .card { animation: goldenCardIn }`。
+      两条规则的 animation-name 冲突，胜负只看 CSS 里谁写在后面 ——
+      结果就是切换时 goldenCardIn 被 cardIn 顶掉，整面板放缩动画根本不播
+      （实测 animationstart 只抓到 badgePop / dotPop / cardIn，没有 goldenCardIn）。
+   ③ 还有隐藏问题：入场动画的 `both` 会把 opacity/transform 的终态锁住，
+      切换动画想动 transform 也会被这条填充值牵着走。
+
+   改法：入场动画只在**页面加载时**整体播一次，挪到 #app 上用一次性标记类 .boot，
+   播完由 JS 摘掉（见 bootIn()）。卡片本身平时不带任何 animation，
+   于是 #app.golden-enter .card 的 goldenCardIn 就能干净地生效。 */
+#app.boot .top-card       { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+#app.boot .room-info-card { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.09s both; }
+#app.boot .sections-card  { animation: cardIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both; }
 @keyframes cardIn {
     0%   { opacity: 0; transform: translateY(16px) scale(0.975); }
     100% { opacity: 1; transform: translateY(0)    scale(1); }

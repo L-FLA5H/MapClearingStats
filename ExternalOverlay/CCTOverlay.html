@@ -21,32 +21,76 @@
             </div>
             <div class="top-divider"></div>
             <div class="top-right">
+                <div class="golden-badge" id="golden-badge">
+                    <i class="berry-dot" id="badge-berry"></i>
+                    <span id="badge-text">带金</span>
+                </div>
                 <div class="total-line">
-                    <span class="total-label">总死亡</span>
+                    <span class="total-label" id="label-deaths">总死亡</span>
                     <span class="total-deaths" id="total-deaths">0</span>
                 </div>
                 <div class="total-line">
-                    <span class="total-label">总用时</span>
+                    <span class="total-label" id="label-time">总用时</span>
                     <span class="total-time" id="total-time">00:00:00.000</span>
                 </div>
-                <div class="avg-line">
-                    <span class="avg-label">平均死亡</span><b id="avg-deaths">-</b>
+                <div class="avg-line" id="avg-line">
+                    <span class="avg-label" id="avg-label-1">平均死亡</span><b id="avg-deaths">-</b>
                     <i class="avg-sep">·</i>
-                    <span class="avg-label">平均用时</span><b id="avg-time">-</b>
+                    <span class="avg-label" id="avg-label-2">平均用时</span><b id="avg-time">-</b>
+                </div>
+                <!-- 一命挑战专用：成功率 + 进入率 + 局数。初见模式整行隐藏。
+                     成功率行：带金成功率 80%   （16/20）
+                     副行：    进入率 9.09% · 带金死亡 52 (13)
+                     这三个数都由 CCT 的 /cct/parseFormat 直接给（口径和 CCT 面板一致），
+                     不是我们自己拿 previousAttempts 算的。 -->
+                <div class="golden-line" id="golden-line">
+                    <span class="golden-label" id="golden-label">带金成功率</span>
+                    <span class="golden-rate" id="golden-rate">-</span>
+                    <span class="golden-detail" id="golden-detail"></span>
+                </div>
+                <div class="golden-subline" id="golden-subline">
+                    <span class="golden-sub" id="golden-runs">进入率 -</span>
+                    <i class="avg-sep">·</i>
+                    <span class="golden-sub" id="golden-enter">带金死亡 -</span>
                 </div>
             </div>
         </div>
 
         <div class="card room-info-card" id="room-info-card">
-            <div class="room-info-block">
-                <span class="icon">💀</span>
-                <span class="label">本面死亡</span>
-                <span class="value" id="room-deaths">0</span>
+            <div class="room-info-row">
+                <div class="room-info-block">
+                    <span class="icon" id="blk1-icon">💀</span>
+                    <span class="label" id="blk1-label">本面死亡</span>
+                    <span class="value" id="room-deaths">0</span>
+                </div>
+                <div class="room-info-block">
+                    <span class="icon" id="blk2-icon">⏱️</span>
+                    <span class="label" id="blk2-label">本面用时</span>
+                    <span class="time-value" id="room-time">00:00.000</span>
+                </div>
             </div>
-            <div class="room-info-block">
-                <span class="icon">⏱️</span>
-                <span class="label">本面用时</span>
-                <span class="time-value" id="room-time">00:00.000</span>
+            <div class="streak-strip" id="streak-strip">
+                <div class="streak-head">
+                    <span class="streak-title" id="streak-title">本面近 20 次通过情况</span>
+                    <!-- 小闪要求：学 CCT 的格式，在连续通过旁边加最高连续通过 -->
+                    <span class="streak-stat">
+                        连续通过 <b id="streak-best">0</b>
+                        <i class="streak-sep">/</i>
+                        最高 <b id="streak-bestmax">0</b>
+                    </span>
+                </div>
+                <!-- 方块行：左边「较早」、右边「近期」，方向一眼可见。
+                     ⚠️ 永远是 20 个方块 —— 数据不足时在**左边**补空位，
+                        这样「近期」始终贴在最右边，方向指示才不会骗人。 -->
+                <div class="streak-row">
+                    <span class="streak-edge">较早</span>
+                    <div class="streak-dots" id="streak-dots"></div>
+                    <span class="streak-edge">近期</span>
+                </div>
+                <div class="streak-foot" id="streak-foot">
+                    <span class="streak-title" style="letter-spacing:0;">近 20 次通过率</span>
+                    <span class="streak-rate" id="streak-rate">-</span>
+                </div>
             </div>
         </div>
 
