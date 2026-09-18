@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="../../ExternalOverlay/CCTOverlay.css">
+</head>
+<body>
+    <div id="app">
+
+        <div id="status-overlay">
+            <div class="status-box">
+                <span class="status-label">当前状态：</span>
+                <span class="status-value" id="status-value">加载中</span>
+            </div>
+        </div>
+
+        <div class="card top-card">
+            <div class="top-left">
+                <div class="chapter-name" id="chapter-name">-</div>
+                <div class="room-name-inline" id="room-name-inline">-</div>
+            </div>
+            <div class="top-divider"></div>
+            <div class="top-right">
+                <div class="golden-badge" id="golden-badge">
+                    <i class="berry-dot" id="badge-berry"></i>
+                    <span id="badge-text">带金</span>
+                </div>
+                <div class="total-line">
+                    <span class="total-label" id="label-deaths">总死亡</span>
+                    <span class="total-deaths" id="total-deaths">0</span>
+                </div>
+                <div class="total-line">
+                    <span class="total-label" id="label-time">总用时</span>
+                    <span class="total-time" id="total-time">00:00:00.000</span>
+                </div>
+                <div class="avg-line" id="avg-line">
+                    <span class="avg-label" id="avg-label-1">平均死亡</span><b id="avg-deaths">-</b>
+                    <i class="avg-sep">·</i>
+                    <span class="avg-label" id="avg-label-2">平均用时</span><b id="avg-time">-</b>
+                </div>
+                <!-- 一命挑战专用：成功率 + 进入率 + 局数。初见模式整行隐藏。
+                     成功率行：带金成功率 80%   （16/20）
+                     副行：    进入率 9.09% · 带金局数 #21
+                     这三个数都由 CCT 的 /cct/parseFormat 直接给（口径和 CCT 面板一致），
+                     不是我们自己拿 previousAttempts 算的。 -->
+                <div class="golden-line" id="golden-line">
+                    <span class="golden-label" id="golden-label">带金成功率</span>
+                    <span class="golden-rate" id="golden-rate">-</span>
+                    <span class="golden-detail" id="golden-detail"></span>
+                </div>
+                <div class="golden-subline" id="golden-subline">
+                    <span class="golden-sub" id="golden-runs">进入率 -</span>
+                    <i class="avg-sep">·</i>
+                    <span class="golden-sub" id="golden-enter">带金局数 -</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card room-info-card" id="room-info-card">
+            <div class="room-info-row">
+                <div class="room-info-block">
+                    <span class="icon" id="blk1-icon">💀</span>
+                    <span class="label" id="blk1-label">本面死亡</span>
+                    <span class="value" id="room-deaths">0</span>
+                </div>
+                <div class="room-info-block">
+                    <span class="icon" id="blk2-icon">⏱️</span>
+                    <span class="label" id="blk2-label">本面用时</span>
+                    <span class="time-value" id="room-time">00:00.000</span>
+                </div>
+            </div>
+            <div class="streak-strip" id="streak-strip">
+                <div class="streak-head">
+                    <span class="streak-title" id="streak-title">本面近 20 次通过情况</span>
+                    <span class="streak-stat">
+                        连续通过 <b id="streak-best">0</b><i class="streak-sep">/</i>最高 <b id="streak-bestmax">0</b>
+                    </span>
+                </div>
+                <div class="streak-row">
+                    <span class="streak-edge">较早</span>
+                    <div class="streak-dots" id="streak-dots"></div>
+                    <span class="streak-edge">近期</span>
+                </div>
+                <!-- 方向提示 + 通过率。
+                     一命模式下这一整行隐藏：通过率已经放到第一张卡片的
+                     「带金成功率」里了，方向提示也是一眼就懂的，去掉能压低高度。 -->
+                <div class="streak-foot" id="streak-foot">
+                    <span class="streak-title" style="letter-spacing:0;">近 20 次通过率</span>
+                    <span class="streak-rate" id="streak-rate">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card sections-card" id="sections-card">
+            <div class="sections-left">
+                <div class="progress-title">进度</div>
+                <div class="progress-line">小节 <span id="cp-progress">-</span></div>
+                <div class="progress-line">房间 <span id="room-progress">-</span></div>
+            </div>
+            <div class="sections-right" id="sections"></div>
+            <div class="progress-pct" id="progress-pct">0<span class="unit">%</span></div>
+            <div class="sections-progress"><div class="fill" id="sections-fill"></div></div>
+        </div>
+
+        <div class="notice" id="notice" style="display:none;"></div>
+    </div>
+    
+<script>
+const SPEC = [["ST",7],["抹除",12],["粉碎",8],["压制",6],["破坏",7],["毁灭",19]];
+const CUR_CP = 0, CUR_ROOM = 1;
+const CPS = SPEC.map(function(s){
+  var rooms = []; for (var i=0;i<s[1];i++) rooms.push(s[0] + "_r" + i);
+  return { abbreviation: s[0], name: s[0], rooms: rooms };
+});
+const CUR = CPS[CUR_CP].rooms[CUR_ROOM];
+const VISITED = {};
+CPS.forEach(function(c, ci){ c.rooms.forEach(function(r, ri){
+  if (ci < CUR_CP || (ci === CUR_CP && ri < CUR_ROOM)) VISITED[r] = true;
+}); });
+const PATH = { errorCode: 0, path: { checkpoints: CPS.map(function(c){
+  return { abbreviation: c.abbreviation, name: c.name,
+           rooms: c.rooms.map(function(r){ return { debugRoomName: r }; }) };
+}) } };
+const ATTEMPTS = [false,true,false,false,true,true,false,true,true,true,true,true,true,true,true,true,true,true,true];
+const FAKE = {};
+FAKE["mcs_session_v32"] = JSON.stringify({
+  chapterName: "杨桃星球", path: PATH.path,
+  startTime: Date.now() - 261723, lastRoom: CUR, currentRoomEnterTime: Date.now() - 31329,
+  roomTimes: {}, visitedRooms: VISITED, roomDeaths: {}, lastCurDeaths: {},
+  roomEnterCounts: {}, isPaused: false, pauseStartTime: 0
+});
+const origGet = window.localStorage.getItem.bind(window.localStorage);
+window.localStorage.getItem = function(k){ return FAKE[k] || origGet(k); };
+const origSet = window.localStorage.setItem.bind(window.localStorage);
+window.localStorage.setItem = function(k, v){ FAKE[k] = v; origSet(k, v); };
+
+// 初始「没拿草莓」→ 初见布局；__flip() 之后才开始拿 → 触发切换动画
+// __drop() 反向翻回 false，用来验证「带金死亡后掉回初见」这条路，
+// 以及「再次拿起时动画能不能重播」（.pop 必须被清干净才行）。
+var HOLDING = false;
+var SILVER = false;      // 想测「带银」把它设成 true（__silver()）
+window.__flip = function(){ HOLDING = true; };
+window.__drop = function(){ HOLDING = false; };
+window.__silver = function(){ SILVER = true; };
+window.__gold = function(){ SILVER = false; };
+
+const ROOMS = {};
+CPS.forEach(function(c){ c.rooms.forEach(function(r){
+  ROOMS[r] = { debugRoomName: r, timeSpentInRoomInRuns: 0,
+    goldenBerryDeaths: 0, goldenBerryDeathsSession: 0, previousAttempts: [],
+    lastTenRate: 0, maxRate: 0, successStreak: 0, successStreakBest: 0,
+    deathsInCurrentRun: 0, timeSpentInRoom: 0 };
+}); });
+window.fetch = async function(url, opts){
+  var u = String(url), d;
+  if (u.indexOf("32271") >= 0) d = { sceneType: "Celeste.Level" };
+  // ⚠️ 覆盖层现在靠 POST /cct/parseFormat 取「成功率/进入率/局数」，
+  //    必须实现这个分支，否则 requestGoldenStats 会抛异常 → 副行一直停在占位符，
+  //    看起来像「数据没填上」，会误判成 bug。
+  else if (u.indexOf("parseFormat") >= 0) {
+    var body = {};
+    try { body = JSON.parse((opts && opts.body) || "{}"); } catch(e) {}
+    var PF = {
+      "{room:goldenSuccessRate}": "18.18%",
+      "{room:goldenSuccesses}": "2",
+      "{room:goldenEntries}": "11",
+      "{room:goldenEntryChance}": "11.96%",
+      "{run:currentPbStatusNumber}": "-",
+      "{chapter:goldenDeaths}": "91",
+      "{chapter:goldenDeathsSession}": "23"
+    };
+    d = { errorCode: 0,
+          formats: (body.formats || []).map(function(f){
+            return PF[f] !== undefined ? PF[f] : ""; }) };
+  }
+  else if (u.indexOf("currentChapterPath") >= 0) d = PATH;
+  else if (u.indexOf("currentChapterStats") >= 0) d = {
+      chapterStats: { chapterName: "杨桃星球",
+                      goldenType: HOLDING ? (SILVER ? 1 : 0) : 0, rooms: ROOMS } };
+  else d = { chapterName: "杨桃星球", currentRoom: {
+      debugRoomName: CUR, deathsInCurrentRun: 3,
+      previousAttempts: ATTEMPTS,
+      successStreak: 12, successStreakBest: 12,
+      goldenBerryDeaths: 39, goldenBerryDeathsSession: 1,
+      maxRate: 0.92,
+      timeSpentInRoomInRuns: 0,
+      timeSpentInRoom: 124000000
+  }, modState: { playerIsHoldingGolden: HOLDING, goldenType: HOLDING ? 1 : 0,
+                 chapterCompleted: false, goldenDone: false,
+                 deathTrackingPaused: false, recordingPath: false } };
+  return { json: async function(){ return d; } };
+};
+</script>
+<script src="../../ExternalOverlay/Timing.js"></script>
+<script src="../../ExternalOverlay/CCTOverlay.js"></script>
+</body>
+</html>
