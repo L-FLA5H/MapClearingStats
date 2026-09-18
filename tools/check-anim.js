@@ -26,8 +26,10 @@ const EDGE_CANDIDATES = [
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 ];
 const PORT = 9355;
-const OUT = process.argv[2] ||
-    path.join(process.env.USERPROFILE || '.', 'WorkBuddy AI', '2026-09-13-13-53-51', '_preview');
+// 夹具默认在 tools/fixtures/（相对本脚本），也可以用第一个参数指定别的目录。
+// 夹具里的 CCTOverlay.css / CCTOverlay.js / Timing.js 用相对路径指向 ../../ExternalOverlay/，
+// 所以不需要先把覆盖层文件复制过来。
+const OUT = process.argv[2] || path.join(__dirname, 'fixtures');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function getJSON(p) {
@@ -50,7 +52,8 @@ function check(name, ok, detail) {
     const edge = EDGE_CANDIDATES.find(p => fs.existsSync(p));
     if (!edge) { console.error('找不到 Edge'); process.exit(1); }
     if (!fs.existsSync(path.join(OUT, 'anim_case.html'))) {
-        console.error('缺 anim_case.html，请先跑 make_layout_preview.py：' + OUT);
+        console.error('缺夹具 anim_case.html：' + OUT);
+        console.error('它应该在 tools/fixtures/ 里（跟着仓库一起 clone 下来）。');
         process.exit(1);
     }
 
