@@ -334,6 +334,9 @@ powershell -ExecutionPolicy Bypass -File "tools\diag.ps1" 120
 - **「局数」这个数据拿不到**：CCT 只在拿着金草莓的那一刻短暂提供，没拿时是空的。覆盖层在拿不到时会退回显示「带金死亡」
 - **如果想要走势条实时刷新**，需要把 CCT 的「暂停死亡追踪」设为**关**（开着的时候 CCT 不记录房间尝试）
 
+> v0.3.1 是内部重构 + 文档补充，**没有用户可见的变化**（计时逻辑收敛到 `Timing.js`，主循环拆成六步管道）。
+> 详见 [Release notes](docs/release-notes-v0.3.1.md)。
+>
 > v0.3.0 新增了**一命挑战模式（带金 / 带银）**，并重做模糊层，修了一批动画与数据刷新的问题。
 > 详见 [Release notes](docs/release-notes-v0.3.0.md)。
 >
@@ -364,7 +367,8 @@ MapClearingStats/
 │   ├── preview-silver.png        # 带银模式预览
 │   ├── release-notes-v0.1.0.md
 │   ├── release-notes-v0.2.0.md
-│   └── release-notes-v0.3.0.md
+│   ├── release-notes-v0.3.0.md
+│   └── release-notes-v0.3.1.md
 ├── tools/                    # 排查与自检工具（见 tools/README.md）
 │   ├── diag.ps1                  # 记录 CCT 数据变化（不用装东西）
 │   ├── diagnose.html             # 浏览器版诊断页
