@@ -812,6 +812,11 @@ html, body {
 /* 当前小节要展示方格，给它更多横向空间（其余小节只需显示一个数字）。
    不给的话 6 个小节均分，当前小节只剩 ~59px，7 个方格会被压成 5px。 */
 .sections-right:not(.single) .section.current { flex-grow: 3; }
+
+/* ⚠️ 必须给当前小节一个硬性最小宽度。
+   flex-grow 只在「有剩余空间」时才生效 —— 小节一多就没空间了，
+   当前列会被压到 40px，方格算出来只有 8px，配上 3px 圆角看起来就像圆点。 */
+.sections-right.many:not(.single) .section.current { min-width: 92px; }
 .section .name {
     font-size: 17px;
     font-weight: 700;
@@ -944,6 +949,17 @@ html, body {
 .sections-right.many .section.dist-5 .name { font-size: 10px; color: #3a3a3a; }
 .sections-right.many .section.dist-5 .count { font-size: 12px; color: #666; }
 
+/* 远端继续淡出：不做硬截断，靠透明度过渡（配合 JS 里的 FAR）
+   ⚠️ 透明度必须加在子元素上，不能加在 .section 上 ——
+   .section.entering 的动画带 animation-fill-mode: both，
+   动画结束后会把 opacity: 1 保留下来，直接盖掉 .section 上的值。 */
+.sections-right.many .section.dist-2 > * { opacity: 0.88; }
+.sections-right.many .section.dist-3 > * { opacity: 0.62; }
+.sections-right.many .section.dist-4 > * { opacity: 0.34; }
+.sections-right.many .section.dist-5 > * { opacity: 0.18; }
+.sections-right.many .section.dist-6 > * { opacity: 0.10; }
+.sections-right.many .section.dist-7 > * { opacity: 0.06; }
+
 .sections-right.single { justify-content: center; align-items: center; }
 .sections-right.single .section { flex: 1 1 auto; width: 100%; align-items: center; justify-content: center; }
 .sections-right.single .blocks .block { --bs-max: 28px; border-radius: 4px; }
@@ -961,12 +977,13 @@ html, body {
     text-shadow: 0 0 12px rgba(255,140,66,0.5);
     letter-spacing: 1px;
 }
-.sections-outside.enter { animation: outsideIn 0.35s ease-out forwards; }
-.sections-outside.leave { animation: outsideOut 0.3s ease-in forwards; }
-@keyframes outsideIn {
-    0%   { opacity: 0; transform: translateY(8px); }
-    100% { opacity: 1; transform: translateY(0); }
-}
+
+/* ⚠️⚠️ 必须放在 .dist-N 系列之后。
+   两者优先级相同（都是 5 个类），全靠「后写的赢」。
+   放到前面的话，已通过的小节会被 .dist-N 的灰色盖掉，看不出已经打过了。 */
+.sections-right.many .section.cleared .name  { color: #7ec98a; }
+.sections-right.many .section.cleared .count { color: #7ec98a; }
+
 @keyframes outsideOut {
     0%   { opacity: 1; transform: translateY(0); }
     100% { opacity: 0; transform: translateY(-8px); }

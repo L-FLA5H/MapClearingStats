@@ -2235,7 +2235,16 @@ function renderSections(path, currentRoom, cpIndex, roomIndex, cp) {
         const fromH = sectionsCard ? sectionsCard.offsetHeight : 0;
         sectionsEl.innerHTML = "";
 
-        for (let i = 0; i < checkpoints.length; i++) {
+        // ---- 小节太多时不做硬截断，让远端的小节逐渐淡出 ----
+        // 原来两端打省略号太生硬；改成保留小节本身，靠字号 + 透明度过渡。
+        // 最远显示到 dist-4（左右各 4 个）—— 再远的已经几乎全透明，不渲染也看不出来。
+        const FAR = 4;
+        const visStart = (cpIndex >= 0) ? Math.max(0, cpIndex - FAR) : 0;
+        const visEnd = (cpIndex >= 0)
+            ? Math.min(checkpoints.length - 1, cpIndex + FAR)
+            : Math.min(checkpoints.length - 1, FAR * 2);
+
+        for (let i = visStart; i <= visEnd; i++) {
             const c = checkpoints[i];
             const isCurrent = (i === cpIndex);
             const dist = Math.abs(i - cpIndex);
@@ -2250,7 +2259,9 @@ function renderSections(path, currentRoom, cpIndex, roomIndex, cp) {
                 else if (dist === 2) section.classList.add("dist-2");
                 else if (dist === 3) section.classList.add("dist-3");
                 else if (dist === 4) section.classList.add("dist-4");
-                else section.classList.add("dist-5");
+                else if (dist === 5) section.classList.add("dist-5");
+                else if (dist === 6) section.classList.add("dist-6");
+                else section.classList.add("dist-7");
             }
 
             const nameEl = document.createElement("div");
@@ -2329,7 +2340,8 @@ function renderSections(path, currentRoom, cpIndex, roomIndex, cp) {
         }
 
         sectionsEl.appendChild(section);
-    }
+        }
+
 
         // 内容变了 → 卡片高度缓动过去，而不是一步到位
         animateCardHeight(sectionsCard, fromH);

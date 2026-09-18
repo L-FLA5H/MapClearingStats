@@ -106,8 +106,12 @@
     </div>
     
 <script>
-const SPEC = [["ST",7],["抹除",12],["粉碎",8],["压制",6],["破坏",7],["毁灭",19]];
-const CUR_CP = 0, CUR_ROOM = 1;
+// 默认的小节表。测试可以用 window.__SPEC / window.__CUR 覆盖
+// —— check-anim.js 用它来构造「小节很多」的场景。
+const SPEC = (window.__SPEC) ||
+              [["ST",7],["抹除",12],["粉碎",8],["压制",6],["破坏",7],["毁灭",19]];
+const CUR_CP = (window.__CUR && window.__CUR[0]) || 0;
+const CUR_ROOM = (window.__CUR && window.__CUR[1]) || 1;
 const CPS = SPEC.map(function(s){
   var rooms = []; for (var i=0;i<s[1];i++) rooms.push(s[0] + "_r" + i);
   return { abbreviation: s[0], name: s[0], rooms: rooms };
