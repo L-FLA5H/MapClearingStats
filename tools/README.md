@@ -57,6 +57,15 @@ node tools/check-anim.js
 
 改动覆盖层之后**先跑这个**，能挡掉大部分低级错误。
 
+> **依赖**：node + Edge（Chromium 内核，Windows 自带）。
+> 脚本会自己起无头浏览器、跑完自己关，**不需要开游戏**。
+>
+> 夹具在 [`fixtures/`](fixtures/) 里，跟着仓库一起 clone 下来，不用额外准备。
+> 它引用的是 `../ExternalOverlay/` 里**仓库当前这份代码**，所以测的永远是最新代码。
+
+⚠️ **改了 DOM 结构**（加卡片、改 id、改 class）时，夹具要跟着改，
+见 [`fixtures/README.md`](fixtures/README.md)。只改逻辑 / 样式不用动。
+
 ### `cct-dump.js`
 
 一次性打印 CCT 的所有字段（含 `parseFormat` 逐项结果）。
