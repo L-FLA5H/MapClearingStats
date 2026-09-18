@@ -176,7 +176,7 @@ function dstate(label) {
         "上次房间": s.lastRoom,
         "总用时(秒)": s.startTime ? +((now - s.startTime) / 1000).toFixed(3) : null,
         "进本房时刻": s.currentRoomEnterTime || null,
-        "本房已待(秒)": s.currentRoomEnterTime ? +((now - s.currentRoomEnterTime) / 1000).toFixed(3) : null,
+        "本房已待(秒)": +Timing.currentRoomStaySec(s, Timing.nowMs(s)).toFixed(3),
         "已结算房间用时": JSON.parse(JSON.stringify(s.roomTimes || {})),
         "房间死亡数": JSON.parse(JSON.stringify(s.roomDeaths || {})),
         "暂停中": s.isPaused,
@@ -186,7 +186,7 @@ function dstate(label) {
     pushLog("  章节=" + (s.chapterName || "(空)")
           + "   上次房=" + (s.lastRoom || "(空)")
           + "   总用时=" + (s.startTime ? ((now - s.startTime) / 1000).toFixed(2) + "s" : "null"));
-    pushLog("  进本房=" + (s.currentRoomEnterTime ? ((now - s.currentRoomEnterTime) / 1000).toFixed(2) + "s前" : "null")
+    pushLog("  进本房=" + (s.currentRoomEnterTime ? Timing.currentRoomStaySec(s, Timing.nowMs(s)).toFixed(2) + "s前" : "null")
           + "   暂停中=" + s.isPaused
           + "   暂停开始=" + (s.pauseStartTime ? new Date(s.pauseStartTime).toLocaleTimeString() : "0"));
     pushLog("  roomTimes=" + JSON.stringify(s.roomTimes || {}));
@@ -285,24 +285,89 @@ let seedDeathsOnly = false;
 // 玩家撞刺死亡 → 草莓掉出去 → 但马上又走到开头拿起，
 // 这个过程如果布局来回切会很花。用一个短冷却窗口吸收掉：
 // 掉草莓后 N 毫秒内若重新拿起，视作同一次挑战，不退出也不重播动画。
-// 读「金 / 银」类型。
-// CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
-// ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
-//    所以这里做成**多来源 + 容错**：
-//      · 主来源 stats.chapterStats.goldenType
-//      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
-//        但多读一处没有副作用，将来 CCT 补上了就能直接用）
-//      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
-//    并且把原始值记一条日志，方便在调试面板 / 探针里核对 CCT 到底报了什么。
-let lastGoldenTypeRaw = null;
-function readGoldenType(stats, state) {
-    const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
-    const b = (state && state.modState) ? state.modState.goldenType : undefined;
-    const raw = (a !== undefined && a !== null) ? a
-              : (b !== undefined && b !== null) ? b
-              : 0;
-    const n = Number(raw) || 0;
+// ===== CctClient：CCT 数据格式的唯一口径 =====
+//
+// CCT 的字段名、goldenType 的反直觉映射、抓占位符的坑——这些「格式知识」
+// 以前散在主代码各处，还在 tools/cct-dump.js 里抄了一份。现在全部收进这个对象。
+//
+// 本区的规矩（tools 和测试靠这个约定工作）：
+//   · **纯函数、零 DOM、零外部引用**（连 dlog 都不用）
+//   · node 工具与测试按 BEGIN/END 标记切片求值复用（见 tools/cct-dump.js、
+//     tools/check-cctclient.js）
+//   · tools/diag.ps1 是给「没装 node 的用户」准备的诊断工具，刻意不依赖任何
+//     JS，它的占位符表单独维护（PowerShell 无法加载 JS 模块）——改本区时请对照
+// ==== CctClient BEGIN（切片标记，勿改此行）====
+const CctClient = (function () {
 
+    // ---- 占位符表 ----
+    // ⚠️⚠️ 这几个占位符是**实测确认**的（2026-09-16 探针 + 直连 CCT）。
+    //
+    // ⚠️⚠️⚠️ 关键教训：CCT 的占位符表藏在 DLL 里，而且是 **UTF-16 编码**，
+    //   用普通 strings / grep 搜不到。必须：
+    //     strings -e l <dll> | grep -oE '\{[a-z]+:[a-zA-Z]+\}'
+    //   一开始只从「CCT 自带覆盖层的默认格式串」里抄了一部分，
+    //   结果把「进入率」错当成 {room:chokeRate}（那是**卡关率**），
+    //   导致第一面的进入率显示 69.57% 而不是 100%。
+    //
+    // 实测对照（房间 a-02，带金通过 2 次 / 进入 11 次）：
+    //   {room:goldenSuccessRate} = 18.18%  ← 带金成功率 = goldenSuccesses/goldenEntries
+    //   {room:goldenSuccesses}   = 2       ← 带金通过数
+    //   {room:goldenEntries}     = 11      ← 带金进入次数
+    //   {room:goldenEntryChance} = 11.96%  ← **带金进入率**（草莓所在那面应为 100%）
+    //   {room:chokeRate}         = 81.82%  ← 卡关率，**不是**进入率
+    //   {run:currentPbStatusNumber} = "-"  ← 「局」要带 Number 后缀的版本
+
+    // 覆盖层用（顺序即 requestGoldenStats / writeGoldenStats 里的下标含义，勿调换）：
+    const GOLDEN_STATS_PLACEHOLDERS = [
+        "{room:goldenSuccessRate}",          // 0 带金成功率
+        "{room:goldenSuccesses}",            // 1 带金通过数
+        "{room:goldenEntries}",              // 2 带金进入次数
+        "{room:goldenEntryChance}",          // 3 带金进入率
+        "{run:currentPbStatusNumber}",       // 4 局数（注意结尾的 Number）
+        "{chapter:goldenDeaths}",            // 5 带金死亡（本章累计）
+        "{chapter:goldenDeathsSession}",     // 6 带金死亡（本次会话）
+    ];
+
+    // 探针全量表（tools/cct-dump.js 用；diag.ps1 取其中 9 项子集、单独维护）：
+    const PROBE_PLACEHOLDERS = [
+        "{room:name}",
+        "{room:debugName}",
+        "{room:roomNumberInChapter}",
+        "{room:goldenSuccessRate}",
+        "{room:goldenSuccesses}",
+        "{room:goldenEntries}",
+        "{room:goldenEntryChance}",
+        "{room:goldenEntryChanceSession}",
+        "{room:chokeRate}",
+        "{room:chokeRateSession}",
+        "{checkpoint:chokeRate}",
+        "{checkpoint:goldenSuccessRate}",
+        "{run:currentPbStatusNumber}",
+        "{run:currentPbStatusSessionNumber}",
+        "{run:currentPbStatus}",
+        "{room:goldenDeaths}",
+        "{room:goldenDeathsSession}",
+        "{chapter:goldenDeaths}",
+        "{chapter:goldenDeathsSession}",
+        "{room:successRate}",
+        "{room:successes}",
+        "{room:attempts}",
+        "{room:currentStreak}",
+        "{checkpoint:currentStreak}",
+        "{chapter:roomCount}",
+        "{pb:best}",
+        "{pb:bestSession}",
+    ];
+
+    // ---- goldenType 映射 ----
+    // CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
+    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
+    //    所以做成**多来源 + 容错**：
+    //      · 主来源 stats.chapterStats.goldenType
+    //      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
+    //        但多读一处没有副作用，将来 CCT 补上了就能直接用）
+    //      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
+    //
     // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名猜：
     //     带银（Scroogle 章）      → goldenType = 1
     //     带金（ZZ-HeartSide 章）  → goldenType = 0
@@ -311,16 +376,55 @@ function readGoldenType(stats, state) {
     //   → 所以：0 = 金，非 0 = 银。
     // ⚠️ 之前写成「1 = 金、2 = 银」是错的，这正是小闪反馈
     //    「带银时卡片没变银而是变金」的根因。
-    const isSilver = (n !== 0);
+    function goldenType(stats, state) {
+        const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
+        const b = (state && state.modState) ? state.modState.goldenType : undefined;
+        const raw = (a !== undefined && a !== null) ? a
+                  : (b !== undefined && b !== null) ? b
+                  : 0;
+        const n = Number(raw) || 0;
+        const isSilver = (n !== 0);
+        // 把两个来源的原始值一并带回，方便调用方打日志核对
+        return { raw: n, isSilver, fromChapterStats: a, fromModState: b };
+    }
 
-    if (lastGoldenTypeRaw !== n) {
-        lastGoldenTypeRaw = n;
-        dlog("◆ goldenType = " + n + "（按" + (isSilver ? "银" : "金") + "渲染）"
-             + "｜chapterStats=" + a + " · modState=" + b);
+    // ---- 快照归一化 ----
+    // state.currentRoom / state.modState 的原始字段以前在 detectDeaths、
+    // buildStreakAttempts、reconcileSession 等处各自直取；现在统一走这里，
+    // null 安全，CCT 改字段名时只改这一处。
+    // ⚠️ previousAttempts 实测**只在换房时刷新**（带金挑战期间连死 4 次，
+    //    长度和内容完全不变）——覆盖层靠「实时增量」兜底（见 noteGoldenProgress）。
+    function snapshot(state) {
+        const room = (state && state.currentRoom) || {};
+        const mod = (state && state.modState) || {};
+        return {
+            chapterName: (state && state.chapterName) || "",
+            room: room.debugRoomName || "",
+            holdingGolden: !!mod.playerIsHoldingGolden,
+            trackingPaused: !!mod.deathTrackingPaused,
+            deathsInCurrentRun: room.deathsInCurrentRun || 0,
+            previousAttempts: Array.isArray(room.previousAttempts) ? room.previousAttempts : [],
+            goldenBerryDeaths: room.goldenBerryDeaths || 0,
+            goldenBerryDeathsSession: room.goldenBerryDeathsSession || 0,
+        };
+    }
+
+    return { goldenType, snapshot, GOLDEN_STATS_PLACEHOLDERS, PROBE_PLACEHOLDERS };
+})();
+// ==== CctClient END ====
+
+let lastGoldenTypeRaw = null;
+function readGoldenType(stats, state) {
+    const gt = CctClient.goldenType(stats, state);
+
+    if (lastGoldenTypeRaw !== gt.raw) {
+        lastGoldenTypeRaw = gt.raw;
+        dlog("◆ goldenType = " + gt.raw + "（按" + (gt.isSilver ? "银" : "金") + "渲染）"
+             + "｜chapterStats=" + gt.fromChapterStats + " · modState=" + gt.fromModState);
     }
 
     // 归一化：金返回 0，银返回 2（上层用 `=== 2` 判银）
-    return isSilver ? 2 : 0;
+    return gt.isSilver ? 2 : 0;
 }
 
 let goldenModeChapter = null;   // 当前判定的章节名
@@ -478,7 +582,49 @@ document.addEventListener('DOMContentLoaded', () => {
     tick();
 });
 
+// ===== tick 主循环：按顺序走完下面六步 =====
+//
+// ⚠️ 顺序不能乱，原因如下（以前靠注释守着，现在由函数结构固定）：
+//   ① 一命模式翻转必须**立刻**换布局（不等 1.5 秒节流），所以判定排在渲染之前；
+//   ② 上半渲染（头部 / 走势条）必须排在「房间切换结算」之前 ——
+//      结算会改 roomTimes 与 transition，先渲染才能拿到翻转前的布局做动画过渡；
+//   ③ 「结算」必须排在「恢复计时」之后 —— resumeTimer() 会把进房时刻往后推
+//      来补偿暂停，顺序反了就会把暂停时长算进上一面。
+//
+//   pollScene → reconcileSession → resolveGoldenMode / renderUpper
+//            → locateRoom → settleTiming → renderLower
 async function tick() {
+    // ① 看场景：现在人在关卡里吗
+    const scene = await pollScene();
+    if (!scene.inLevel) {
+        handleOutsideLevel(scene.sceneType);
+        return;
+    }
+
+    // ② 拉 CCT 数据 → 对齐会话（重开 / 换章 / 恢复历史 / 进度有没有保留）
+    const data = await readCct();
+    if (!data) return;
+    const ctx = reconcileSession(data.state, data.path);
+
+    // ③ 判定一命模式 + 上半渲染
+    const mode = resolveGoldenMode(data.state, data.stats, ctx.currentRoom);
+    renderUpper(data.state, data.stats, ctx.hasPath, ctx.currentRoom,
+                mode.diedNow, mode.goldenChanged);
+
+    // ④ 定位当前房间（没有录制路径、或不在路径上时，内部会处理渲染并放弃后续步骤）
+    const place = locateRoom(data.path, ctx.currentRoom, ctx.hasPath);
+    if (!place) return;
+
+    // ⑤ 结算时间：补偿暂停 → 结算上一面 → 记下进本房时刻
+    settleTiming(ctx.currentRoom);
+
+    // ⑥ 下半渲染：房间信息卡 + 小节进度
+    renderLower(data.path, data.state, ctx.hasPath, ctx.currentRoom,
+                place.cpIndex, place.roomIndex, place.cp);
+}
+
+// ① 从 LevelWatcher 读当前场景
+async function pollScene() {
     let inLevel = false;
     let sceneType = "";
     let gamePaused = false;
@@ -529,17 +675,22 @@ async function tick() {
         dstate("场景变化");
     }
 
-    if (!inLevel) {
-        // 不在关卡内：保存当前章节数据到历史
-        if (session.chapterName) {
-            saveChapterHistory();
-        }
-        pauseTimer();
-        showStatusCard(getStatusText(sceneType));
-        saveSession();
-        return;
-    }
+    return { inLevel, sceneType, gamePaused };
+}
 
+// ① 的出口之一：不在关卡内 → 存档、停表、显示状态卡
+function handleOutsideLevel(sceneType) {
+    // 不在关卡内：保存当前章节数据到历史
+    if (session.chapterName) {
+        saveChapterHistory();
+    }
+    pauseTimer();
+    showStatusCard(getStatusText(sceneType));
+    saveSession();
+}
+
+// ② 拉 CCT 的三个接口；拿不到就放弃这一轮
+async function readCct() {
     let state, path, stats;
     try {
         state = await fetchJson("/cct/state");
@@ -548,9 +699,13 @@ async function tick() {
     } catch (e) {
         showStatusCard("CCT 未响应");
         pauseTimer();
-        return;
+        return null;
     }
+    return { state, path, stats };
+}
 
+// ② 对齐会话：处理「重开本章」「换章节」「进度没保留」三种情况
+function reconcileSession(state, path) {
     const chapterName = state.chapterName || "";
     const hasPath = path.errorCode === 0 && path.path && path.path.checkpoints && path.path.checkpoints.length > 0;
 
@@ -584,7 +739,7 @@ async function tick() {
         dstate("章节变化-改之后");
     }
 
-    const currentRoom = state.currentRoom?.debugRoomName || "";
+    const currentRoom = CctClient.snapshot(state).room;
 
     // 「返回地图时进度没保留」检测：
     // 走「返回地图」这条路时章节名会先变成大厅再变回来，所以必然会经过 loadChapterHistory。
@@ -602,48 +757,52 @@ async function tick() {
             saveChapterHistory();
             dstate("清零后");
         } else {
-            dlog("ℹ 从历史恢复数据（上次离开在「" + prevRoom + "」，这次也在「" + currentRoom
-                 + "」→ 进度保留着）");
+            dlog("ℹ 从历史恢复数据（上次离开在「" + prevRoom + "」，这次也在「"
+                 + currentRoom + "」→ 进度保留着）");
         }
     }
 
+    return { hasPath, currentRoom };
+}
+
+// ③ 判定一命挑战模式（带金 / 带银），顺带累积「本次挑战用时」
+function resolveGoldenMode(state, stats, currentRoom) {
     // 返回本次新增的死亡数 → 作为「刚刚死了」的信号传给一命模式判定，
     // 让它能立刻退出带金布局（不等 CCT 那个滞后 1 秒多的手持标志）。
     const diedNow = detectDeaths(state, stats, currentRoom) > 0;
 
-    // ---- 判定一命挑战模式（带金 / 带银）----
     // ⚠️ 这里只在「刚拿起金草莓」或「金银类型确定」时才会返回 true，用来驱动一次重绘。
-    // 平时返回 false，避免每 500ms 无谓重排。
-    const modState = state.modState || {};
+    //    平时返回 false，避免每 500ms 无谓重排。
+    const snap = CctClient.snapshot(state);
 
     // CCT 是否暂停了死亡追踪 —— 每次 tick 刷新，供 requestGoldenStats 判断
     // 要不要用「实时增量」兜底（见 noteGoldenProgress 的注释）。
     // ⚠️ 实测小闪的 CCT 里「暂停死亡追踪」是开着的，
     //    此时 previousAttempts 完全不更新，只能靠带金增量兜底。
-    lastTrackingPaused = !!modState.deathTrackingPaused;
-    // 金 / 银类型。
-    // ⚠️ 两个来源都试：CCT 的 chapterStats.goldenType 是主来源，
-    //    modState.goldenType 只是保险（实测 modState 里没有这个字段，
-    //    但多读一处不会有副作用，将来 CCT 加上了就能直接用上）。
-    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 如果 CCT 报的 goldenType 一直是 0，
-    //    这里就会一直按金色渲染。已加 dlog，可在调试面板看到真实取值。
+    lastTrackingPaused = snap.trackingPaused;
+    // 金 / 银类型的容错与映射在 CctClient 里（见文件顶部 CctClient 分区）。
     const goldenType = readGoldenType(stats, state);
     const goldenChanged = updateGoldenMode(
-        chapterName, goldenType, !!modState.playerIsHoldingGolden, diedNow);
+        state.chapterName || "", goldenType, snap.holdingGolden, diedNow);
 
     // 「本次一命挑战累计用时」：只在真正带金挑战期间累积
-    const nowMs = Date.now();
+    const now = Date.now();
     if (goldenModeOn && !session.isPaused) {
         if (goldenRunTickAt > 0) {
-            const dt = (nowMs - goldenRunTickAt) / 1000;
+            const dt = (now - goldenRunTickAt) / 1000;
             // 卡顿超过 3 秒（切场景、最小化）不计入，防止一次性灌进来一大段时间
             if (dt > 0 && dt < 3) goldenRunSec += dt;
         }
-        goldenRunTickAt = nowMs;
+        goldenRunTickAt = now;
     } else {
         goldenRunTickAt = 0;
     }
 
+    return { diedNow, goldenChanged };
+}
+
+// ③ 上半渲染：换主题 → 显示数据卡 → 头部与走势条
+function renderUpper(state, stats, hasPath, currentRoom, diedNow, goldenChanged) {
     applyGoldenTheme(goldenModeOn, goldenTypeCache);
 
     showDataCards();
@@ -676,12 +835,15 @@ async function tick() {
         // 走势条：只在带金/带银模式下显示（初见推图用不到 previousAttempts）
         renderStreak(state, hasPath, currentRoom, goldenModeOn);
     }
+}
 
+// ④ 在录制路径里定位当前房间；定位不到就自己收尾并返回 null
+function locateRoom(path, currentRoom, hasPath) {
     if (!hasPath) {
         setNotice("");
         renderSectionsEmptyWithText("当前地图没有录制路径");
         pauseTimer();
-        return;
+        return null;
     }
 
     const { cpIndex, roomIndex, cp } = findCurrentRoom(path.path, currentRoom);
@@ -693,9 +855,14 @@ async function tick() {
         resumeTimer();
         session.isPaused = false;
         saveSession();
-        return;
+        return null;
     }
 
+    return { cpIndex, roomIndex, cp };
+}
+
+// ⑤ 结算时间：恢复计时 → 结算上一面 → 记下进本房时刻
+function settleTiming(currentRoom) {
     // ⚠️ 恢复计时必须放在「房间切换结算」之前：
     // resumeTimer() 会把 currentRoomEnterTime 往后推（补偿暂停时长），
     // 而下面结算房间用时用的就是这个时间戳。顺序反了就会把暂停的时间算进上一面。
@@ -704,8 +871,7 @@ async function tick() {
     // 房间切换
     if (currentRoom !== session.lastRoom && session.lastRoom) {
         if (session.currentRoomEnterTime) {
-            const stay = (Date.now() - session.currentRoomEnterTime) / 1000;
-            session.roomTimes[session.lastRoom] = (session.roomTimes[session.lastRoom] || 0) + stay;
+            const stay = Timing.settleRoomStay(session, Timing.nowMs(session));
             dlog("☆ 切房间: " + session.lastRoom + " → " + currentRoom
                  + " | 结算上一房停留 " + stay.toFixed(3) + " 秒"
                  + " → roomTimes[" + session.lastRoom + "] = "
@@ -742,10 +908,13 @@ async function tick() {
             session.visitedRooms[currentRoom] = true;
         }
         session.lastRoom = currentRoom;
-        session.currentRoomEnterTime = Date.now();
+        session.currentRoomEnterTime = Timing.nowMs(session);
         saveSession();
     }
+}
 
+// ⑥ 下半渲染：房间信息卡 + 小节进度
+function renderLower(path, state, hasPath, currentRoom, cpIndex, roomIndex, cp) {
     renderRoomInfo(state, hasPath, currentRoom, cpIndex, cp);
     renderSections(path.path, currentRoom, cpIndex, roomIndex, cp);
 }
@@ -857,7 +1026,7 @@ function renderSectionsEmptyWithText(text) { renderOutsideText(text); }
 function renderSectionsOutside() { renderOutsideText("当前不在路径中"); }
 
 function detectDeaths(state, stats, currentRoom) {
-    const curDeaths = state.currentRoom?.deathsInCurrentRun || 0;
+    const curDeaths = CctClient.snapshot(state).deathsInCurrentRun;
     if (!session.lastCurDeaths) session.lastCurDeaths = {};
     const prevCur = session.lastCurDeaths[currentRoom] || 0;
     let delta = 0;
@@ -971,25 +1140,19 @@ function initSession(chapterName, path) {
 // ===== 章节历史持久化 =====
 // 存「累计用时(秒)」而不是「开始时间戳」：
 // 时间戳在暂停期间不会推进，直接存它会让恢复后的用时把暂停时长也算进去。
-function effNow() {
-    // 暂停中 → 「游戏内经过的时间」应该停在暂停那一刻
-    return (session.isPaused && session.pauseStartTime) ? session.pauseStartTime : Date.now();
-}
+//
+// ⚠️ 「现在几点」统一用 Timing.nowMs(session)（见 Timing.js）。
+//    原来这里那个 effNow() 已经合并进去 —— 全库只剩一个时钟口径。
 
 function saveChapterHistory() {
     if (!session.chapterName) return;
     try {
         const all = JSON.parse(store.get(CHAPTERS_KEY) || "{}");
-        const now = effNow();
+        const now = Timing.nowMs(session);
 
-        // 当前房间那段还没结算，一起存进去，避免切图后丢失
-        const roomTimes = Object.assign({}, session.roomTimes);
-        if (session.lastRoom && session.currentRoomEnterTime) {
-            const stay = (now - session.currentRoomEnterTime) / 1000;
-            if (stay > 0) {
-                roomTimes[session.lastRoom] = (roomTimes[session.lastRoom] || 0) + stay;
-            }
-        }
+        // 当前房间那段还没结算，一起存进去，避免切图后丢失。
+        // ⚠️ 用 settledRoomTimes 拿副本：还没切房，这段不能写回当前会话
+        const roomTimes = Timing.settledRoomTimes(session, now);
 
         all[session.chapterName] = {
             totalSec: session.startTime ? (now - session.startTime) / 1000 : 0,
@@ -1009,7 +1172,7 @@ function loadChapterHistory(chapterName) {
         const all = JSON.parse(store.get(CHAPTERS_KEY) || "{}");
         const data = all[chapterName];
         if (!data) return null;
-        const now = effNow();
+        const now = Timing.nowMs(session);
         return {
             chapterName: chapterName,
             path: session.path,
@@ -1046,7 +1209,7 @@ function timerLoop() {
 
         // 第二张卡片的右格：一命模式下整行都隐藏了，不用管
         if (!transition && !goldenModeOn && session.lastRoom && session.currentRoomEnterTime) {
-            const currentStay = (Date.now() - session.currentRoomEnterTime) / 1000;
+            const currentStay = Timing.currentRoomStaySec(session, Timing.nowMs(session));
             const accumulated = session.roomTimes[session.lastRoom] || 0;
             const el2 = document.getElementById("room-time");
             const v = accumulated + currentStay;
@@ -1297,9 +1460,10 @@ function noteGoldenProgress(entriesStr, succStr, paused) {
 }
 
 // 把「历史基准 + 本次增量」拼成完整的尝试序列
-function buildStreakAttempts(cr) {
-    const base = (cr && Array.isArray(cr.previousAttempts)) ? cr.previousAttempts : [];
-    const room = (cr && cr.debugRoomName) || "";
+function buildStreakAttempts(snap) {
+    // 传入 CctClient.snapshot(state)（previousAttempts 已做数组化兜底）
+    const base = snap ? snap.previousAttempts : [];
+    const room = snap ? snap.room : "";
 
     if (room !== liveGolden.room || base.length !== liveGolden.baseLen) {
         if (room !== liveGolden.room) {
@@ -1338,31 +1502,11 @@ async function requestGoldenStats(roomName, force) {
     goldenStats.at = now;
     goldenStats.room = roomName;
     try {
-        // ⚠️⚠️ 这几个占位符是**实测确认**的（2026-09-16 探针 + 直连 CCT）。
-        //
-        // ⚠️⚠️⚠️ 关键教训：CCT 的占位符表藏在 DLL 里，而且是 **UTF-16 编码**，
-        //   用普通 strings / grep 搜不到。必须：
-        //     strings -e l <dll> | grep -oE '\{[a-z]+:[a-zA-Z]+\}'
-        //   我一开始只从「CCT 自带覆盖层的默认格式串」里抄了一部分，
-        //   结果把「进入率」错当成 {room:chokeRate}（那是**卡关率**），
-        //   导致第一面的进入率显示 69.57% 而不是 100%。
-        //
-        // 实测对照（房间 a-02，带金通过 2 次 / 进入 11 次）：
-        //   {room:goldenSuccessRate} = 18.18%  ← 带金成功率 = goldenSuccesses/goldenEntries
-        //   {room:goldenSuccesses}   = 2       ← 带金通过数
-        //   {room:goldenEntries}     = 11      ← 带金进入次数
-        //   {room:goldenEntryChance} = 11.96%  ← **带金进入率**（草莓所在那面应为 100%）
-        //   {room:chokeRate}         = 81.82%  ← 卡关率，**不是**进入率
-        //   {run:currentPbStatusNumber} = "-"  ← 「局」要带 Number 后缀的版本
-        const out = await parseFormats([
-            "{room:goldenSuccessRate}",          // 0 带金成功率
-            "{room:goldenSuccesses}",            // 1 带金通过数
-            "{room:goldenEntries}",              // 2 带金进入次数
-            "{room:goldenEntryChance}",          // 3 带金进入率
-            "{run:currentPbStatusNumber}",       // 4 局数（注意结尾的 Number）
-            "{chapter:goldenDeaths}",            // 5 带金死亡（本章累计）
-            "{chapter:goldenDeathsSession}",     // 6 带金死亡（本次会话）
-        ]);
+        // 占位符表在 CctClient.GOLDEN_STATS_PLACEHOLDERS（单一来源，
+        // 实测对照与「UTF-16 抓取」的教训都记在那边）。
+        // 下标含义：0 成功率 / 1 通过数 / 2 进入次数 / 3 进入率 / 4 局数 /
+        //           5 带金死亡（本章）/ 6 带金死亡（本次会话）
+        const out = await parseFormats(CctClient.GOLDEN_STATS_PLACEHOLDERS);
         writeGoldenStats(out);
         // 走势条用这两个量做「实时增量」——见 liveGolden 那段注释
         // ⚠️ 只在 CCT 暂停死亡追踪时才需要（否则 previousAttempts 本身就是实时的，
@@ -1687,10 +1831,10 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
     if (!strip || !dotsEl) return;
 
     // 不在关卡内 / CCT 没数据 / 换了房间 / 不是一命挑战模式 → 隐藏并重置状态
-    const cr = (valid && isGoldenMode) ? (state.currentRoom || {}) : null;
-    // ⚠️ 不能直接用 cr.previousAttempts —— 它只在换房间时才刷新（见 liveGolden 注释）。
+    const snap = (valid && isGoldenMode) ? CctClient.snapshot(state) : null;
+    // ⚠️ 不能直接用 snap.previousAttempts —— 它只在换房间时才刷新（见 liveGolden 注释）。
     //    这里用「历史基准 + 本次观测到的实时增量」拼出完整序列。
-    const attempts = cr ? buildStreakAttempts(cr) : null;
+    const attempts = snap ? buildStreakAttempts(snap) : null;
 
     if (!attempts || attempts.length === 0) {
         // ⚠️⚠️ 一命模式下**即使没有数据也要把整条留着**，只是内容显示占位。
@@ -1928,7 +2072,7 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
         lastShownRoomDeaths = deaths;
 
         if (valid && session.lastRoom && session.currentRoomEnterTime) {
-            const currentStay = (Date.now() - session.currentRoomEnterTime) / 1000;
+            const currentStay = Timing.currentRoomStaySec(session, Timing.nowMs(session));
             const accumulated = session.roomTimes[session.lastRoom] || 0;
             displayedRoomTimeSec = accumulated + currentStay;
         } else {
@@ -2292,7 +2436,7 @@ function updateAverages(totalDeaths) {
         if (elT) elT.textContent = "-";
         return;
     }
-    const totalSec = session.startTime ? (effNow() - session.startTime) / 1000 : 0;
+    const totalSec = session.startTime ? (Timing.nowMs(session) - session.startTime) / 1000 : 0;
     if (elD) elD.textContent = (totalDeaths / lastPassedRooms).toFixed(1);
     if (elT) elT.textContent = formatAvgTime(totalSec / lastPassedRooms);
 }
