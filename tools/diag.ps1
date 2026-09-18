@@ -62,7 +62,10 @@ function Get-Formats($formats) {
     }
 }
 
-# Placeholders the overlay actually uses. Keep in sync with CCTOverlay.js.
+# Placeholders the overlay actually uses.
+# 刻意独立维护：本脚本是给「没装 node 的用户」准备的诊断工具，不依赖任何 JS。
+# 主表在 CCTOverlay.js 的 CctClient 分区（GOLDEN_STATS_PLACEHOLDERS / PROBE_PLACEHOLDERS），
+# 改动占位符时请对照那边，保持这里的 9 项子集同步。
 $FMT = @(
     "{room:name}",
     "{room:debugName}",
