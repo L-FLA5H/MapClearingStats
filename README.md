@@ -127,11 +127,39 @@ flowchart LR
 
 ### 第 2 步：配置覆盖层页面
 
-将 `ExternalOverlay` 里的 **3 个文件**覆盖到 CCT 的覆盖层目录：
+将 zip 里的 `ExternalOverlay` 文件夹**整个覆盖**到 CCT 的覆盖层目录：
 
 ```
 <Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\
 ```
+
+覆盖完之后，那个目录里应该是这些文件（**数量随版本变化，以 zip 里的为准**）：
+
+| 文件 | 说明 |
+| --- | --- |
+| `CCTOverlay.html` | 页面结构 |
+| `CCTOverlay.js` | 主逻辑 |
+| `CCTOverlay.css` | 样式 |
+| `Timing.js` | 房间用时计时模块 |
+| `img/` | CCT 自带的图片资源，**不用动** |
+
+> ⚠️ **要整个文件夹一起覆盖，别只挑几个文件。** 文件之间是有依赖的
+> （比如 `CCTOverlay.js` 需要 `Timing.js`），缺一个就会报错、界面出不来。
+
+> ⚠️ **找不到这个目录？** 如果你是第一次装 CCT，**先启动一次游戏**。
+> CCT 会在启动时自动创建这个目录，并把自带的覆盖层文件复制进去。
+
+#### ⚠️ 别放错地方：`Assets\ExternalOverlay\` 是没用的
+
+CCT 的 Mod 包里有**两份**同名文件，很容易搞混：
+
+| 位置 | 是什么 | 游戏读它吗 |
+| --- | --- | --- |
+| `Mods\...ConsistencyTracker.zip` 里的 `Assets\ExternalOverlay\` | CCT **自带的原始副本**，只用来做首次复制 | ❌ **不读** |
+| `ConsistencyTracker\external-tools\ExternalOverlay\` | CCT 运行时复制出来的**工作目录** | ✅ **读这个** |
+
+**判断方法**：看这个目录的上一级是不是 `ConsistencyTracker\`（**和 `Mods` 平级，
+在游戏根目录下**）。如果上面是 `Assets\`，那就放错了。
 
 > ⚠️ CCT 自带同名的 `CCTOverlay.html / .js / .css`，这是 CCT 自带的 UI 界面，本工具的主要改动也就在于此，覆盖前请先备份原文件，否则想用回 CCT 自带界面时会找不回来。
 
@@ -153,27 +181,6 @@ flowchart LR
 界面会出现在画面的**中间偏上**位置，可以自由拖动。
 
 ---
-
-## 自己编译 LevelWatcher
-
-需要 .NET 8 SDK。把 `LevelWatcher` 文件夹放进 `<Celeste 安装目录>\Mods\` 后：
-
-```bash
-cd <Celeste 安装目录>\Mods\LevelWatcher\Source
-dotnet build
-```
-
-编译产物会自动复制到 `LevelWatcher\bin\`。Release 配置下还会额外打包出 `LevelWatcher.zip`：
-
-```bash
-dotnet build -c Release
-```
-
-如果不想把项目放进 Mods 目录，也可以手动指定蔚蓝的安装路径：
-
-```bash
-dotnet build -p:CelestePrefix="D:\Steam\steamapps\common\Celeste"
-```
 
 ## 常见问题
 
@@ -205,6 +212,48 @@ CCT 的 API 只在 Everest 的调试模式为 **「仅Everest」或「开」** �
 
 > 第 2、4 条来自 CCT 自带的常见问题：
 > 游戏内 `Mod选项` → `稳定性追踪器` → `常见问题` → `游戏外工具`
+
+---
+
+### 我把文件放进了 `Assets\ExternalOverlay\`，但没效果
+
+**放错地方了。** CCT 的 Mod 包里有**两份**同名文件：
+
+| 位置 | 是什么 | 游戏读它吗 |
+| --- | --- | --- |
+| `Mods\...ConsistencyTracker\Assets\ExternalOverlay\`<br>（或在 `ConsistencyTracker.zip` 里） | CCT **自带的原始副本**，只在首次启动时被复制一次 | ❌ **不读** |
+| `<Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\` | CCT 运行时复制出来的**工作目录** | ✅ **读这个** |
+
+**正确的目录长这样：**
+
+```
+D:\Steam\steamapps\common\Celeste\
+├── Mods\                          ← Mod 都在这
+│   └── ...ConsistencyTracker.zip  ← 里面有 Assets\ExternalOverlay\（别动这个）
+└── ConsistencyTracker\            ← ⚠️ 和 Mods 平级，在游戏根目录下
+    └── external-tools\
+        └── ExternalOverlay\       ← ✅ 覆盖层文件放这里
+            ├── CCTOverlay.html
+            ├── CCTOverlay.js
+            ├── CCTOverlay.css
+            └── Timing.js
+```
+
+**判断方法**：往上翻一级，看是 `ConsistencyTracker\` 还是 `Assets\`。
+是 `Assets\` 就放错了。
+
+---
+
+### 找不到 `external-tools\ExternalOverlay\` 这个目录
+
+**先启动一次游戏。** CCT 会在启动时自动创建这个目录，并把自带的覆盖层文件复制进去。
+
+如果你已经启动过游戏还是没有，检查：
+
+1. CCT 装好了吗？（在 Everest 的 Mod 列表里能看到 `ConsistencyTracker`）
+2. 有没有别的 CCT 版本把目录建在别处
+
+> 参考：`external-tools` 这个目录名是写死在 CCT 里的（CCT 2.9.8 实测）。
 
 ---
 
@@ -264,45 +313,43 @@ powershell -ExecutionPolicy Bypass -File "tools\diag.ps1" 120
 - **「局数」这个数据拿不到**：CCT 只在拿着金草莓的那一刻短暂提供，没拿时是空的。覆盖层在拿不到时会退回显示「带金死亡」
 - **如果想要走势条实时刷新**，需要把 CCT 的「暂停死亡追踪」设为**关**（开着的时候 CCT 不记录房间尝试）
 
+> v0.3.1 是内部重构 + 文档补充，**没有用户可见的变化**（计时逻辑收敛到 `Timing.js`，主循环拆成六步管道）。
+> 详见 [Release notes](docs/release-notes-v0.3.1.md)。
+>
 > v0.3.0 新增了**一命挑战模式（带金 / 带银）**，并重做模糊层，修了一批动画与数据刷新的问题。
 > 详见 [Release notes](docs/release-notes-v0.3.0.md)。
 >
 > v0.2.0 集中修复了此前 README 列出的 6 个计时 bug（保存退出、重新开始此章节、
 > 返回地图选不保存进度、换图时间虚高等）。详见 [Release notes](docs/release-notes-v0.2.0.md)。
-## 目录结构
+## 进阶
 
+下面这些是**想折腾的时候才需要**的，正常用不到。
+
+| 内容 | 在哪 |
+| --- | --- |
+| 排查工具（抓数据用） | [`tools/`](tools/) —— 见 [tools/README.md](tools/README.md) |
+| CCT 接口速查（字段名 / 单位 / 坑） | [`docs/cct-api-notes.md`](docs/cct-api-notes.md) |
+| 历史版本说明 | [`docs/release-notes-*.md`](docs/) |
+
+### 自己编译 LevelWatcher
+
+需要 .NET 8 SDK。把 `LevelWatcher` 文件夹放进 `<Celeste 安装目录>\Mods\` 后：
+
+```bash
+cd <Celeste 安装目录>\Mods\LevelWatcher\Source
+dotnet build
 ```
-MapClearingStats/
-├── ExternalOverlay/          # 前端覆盖层，覆盖到 CCT 的 external-tools/ExternalOverlay/
-│   ├── CCTOverlay.html
-│   ├── CCTOverlay.js
-│   └── CCTOverlay.css
-├── LevelWatcher/             # 辅助 Mod，放进 Mods/
-│   ├── everest.yaml
-│   ├── LevelWatcher.sln
-│   └── Source/
-│       ├── LevelWatcher.csproj
-│       ├── LevelWatcherModule.cs
-│       ├── LevelWatcherModuleSettings.cs
-│       ├── LevelWatcherModuleSession.cs
-│       └── LevelWatcherModuleSaveData.cs
-├── docs/                     # 文档与截图
-│   ├── cct-api-notes.md          # CCT 接口速查（字段 / 单位 / 坑）
-│   ├── preview-normal.png        # 推图模式预览
-│   ├── preview-gold.png          # 带金模式预览
-│   ├── preview-silver.png        # 带银模式预览
-│   ├── release-notes-v0.1.0.md
-│   ├── release-notes-v0.2.0.md
-│   └── release-notes-v0.3.0.md
-├── tools/                    # 排查与自检工具（见 tools/README.md）
-│   ├── diag.ps1                  # 记录 CCT 数据变化（不用装东西）
-│   ├── diagnose.html             # 浏览器版诊断页
-│   ├── check-anim.js             # 覆盖层自动化自检（31 条断言）
-│   ├── cct-dump.js               # 一次性打印所有 CCT 字段
-│   └── deploy-overlay.ps1        # 部署到游戏目录（备份 + 校验）
-├── 改动表.md                 # 按版本记录的改动摘要
-├── LICENSE
-└── README.md
+
+编译产物会自动复制到 `LevelWatcher\bin\`。Release 配置下还会额外打包出 `LevelWatcher.zip`：
+
+```bash
+dotnet build -c Release
+```
+
+如果不想把项目放进 Mods 目录，也可以手动指定蔚蓝的安装路径：
+
+```bash
+dotnet build -p:CelestePrefix="D:\Steam\steamapps\common\Celeste"
 ```
 
 ---
