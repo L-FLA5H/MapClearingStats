@@ -463,6 +463,48 @@ function check(name, ok, detail) {
     check('当前小节的方格够大（不是被压成小圆点）',
         many.currentWidth >= 92, '当前列宽 ' + many.currentWidth + 'px');
 
+
+    // ============ ⑩ 第三张卡片也要变金 ============
+    // 起因：小闪实测「带金的时候第三张卡片没变金」。
+    // 根因：.sections-card.cleared-flash::after 是绿色图层（攻下小节时的绿光），
+    // 它和 .card.fly-in::after 优先级相同、但写在后面，而且 .cleared-flash
+    // 加上去之后从不摘掉 —— 所以攻下过一个小节之后，镀金扫光扫到第三张卡片
+    // 时用的是绿色图层。修法：让绿色规则在 .fly-in / .fly-out 期间不匹配。
+    console.log('');
+    console.log('== ⑩ 第三张卡片也要变金 ==');
+
+    const cardLayer = JSON.parse(await ev(`(function(){
+        const card = document.getElementById("sections-card");
+        function probe(){
+            const a = getComputedStyle(card, "::after");
+            return {
+                anim: a.animationName,
+                gold: a.backgroundImage.indexOf("241, 196, 15") >= 0,
+                green: a.backgroundImage.indexOf("126, 201, 138") >= 0,
+            };
+        }
+        card.classList.remove("fly-in", "fly-out");
+        card.classList.add("cleared-flash");
+        const onlyFlash = probe();
+        card.classList.add("fly-in");
+        const flyIn = probe();
+        card.classList.remove("fly-in");
+        card.classList.add("fly-out");
+        const flyOut = probe();
+        card.classList.remove("fly-out", "cleared-flash");
+        return JSON.stringify({ onlyFlash: onlyFlash, flyIn: flyIn, flyOut: flyOut });
+    })()`));
+
+    check('攻下小节的绿光还在（没被改坏）',
+        cardLayer.onlyFlash.green && cardLayer.onlyFlash.anim === 'sweep',
+        'anim=' + cardLayer.onlyFlash.anim);
+    check('镀金扫光时第三张卡片是金色图层（不是绿色）',
+        cardLayer.flyIn.gold && !cardLayer.flyIn.green,
+        'anim=' + cardLayer.flyIn.anim);
+    check('退出扫光时第三张卡片也是金色图层',
+        cardLayer.flyOut.gold && !cardLayer.flyOut.green,
+        'anim=' + cardLayer.flyOut.anim);
+
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);
