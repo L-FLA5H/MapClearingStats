@@ -182,27 +182,6 @@ CCT 的 Mod 包里有**两份**同名文件，很容易搞混：
 
 ---
 
-## 自己编译 LevelWatcher
-
-需要 .NET 8 SDK。把 `LevelWatcher` 文件夹放进 `<Celeste 安装目录>\Mods\` 后：
-
-```bash
-cd <Celeste 安装目录>\Mods\LevelWatcher\Source
-dotnet build
-```
-
-编译产物会自动复制到 `LevelWatcher\bin\`。Release 配置下还会额外打包出 `LevelWatcher.zip`：
-
-```bash
-dotnet build -c Release
-```
-
-如果不想把项目放进 Mods 目录，也可以手动指定蔚蓝的安装路径：
-
-```bash
-dotnet build -p:CelestePrefix="D:\Steam\steamapps\common\Celeste"
-```
-
 ## 常见问题
 
 ### 覆盖层一直显示「CCT 未响应」／「无法获取」
@@ -342,43 +321,35 @@ powershell -ExecutionPolicy Bypass -File "tools\diag.ps1" 120
 >
 > v0.2.0 集中修复了此前 README 列出的 6 个计时 bug（保存退出、重新开始此章节、
 > 返回地图选不保存进度、换图时间虚高等）。详见 [Release notes](docs/release-notes-v0.2.0.md)。
-## 目录结构
+## 进阶
 
+下面这些是**想折腾的时候才需要**的，正常用不到。
+
+| 内容 | 在哪 |
+| --- | --- |
+| 排查工具（抓数据用） | [`tools/`](tools/) —— 见 [tools/README.md](tools/README.md) |
+| CCT 接口速查（字段名 / 单位 / 坑） | [`docs/cct-api-notes.md`](docs/cct-api-notes.md) |
+| 历史版本说明 | [`docs/release-notes-*.md`](docs/) |
+
+### 自己编译 LevelWatcher
+
+需要 .NET 8 SDK。把 `LevelWatcher` 文件夹放进 `<Celeste 安装目录>\Mods\` 后：
+
+```bash
+cd <Celeste 安装目录>\Mods\LevelWatcher\Source
+dotnet build
 ```
-MapClearingStats/
-├── ExternalOverlay/          # 前端覆盖层，覆盖到 CCT 的 external-tools/ExternalOverlay/
-│   ├── CCTOverlay.html
-│   ├── CCTOverlay.js
-│   ├── CCTOverlay.css
-│   └── Timing.js
-├── LevelWatcher/             # 辅助 Mod，放进 Mods/
-│   ├── everest.yaml
-│   ├── LevelWatcher.sln
-│   └── Source/
-│       ├── LevelWatcher.csproj
-│       ├── LevelWatcherModule.cs
-│       ├── LevelWatcherModuleSettings.cs
-│       ├── LevelWatcherModuleSession.cs
-│       └── LevelWatcherModuleSaveData.cs
-├── docs/                     # 文档与截图
-│   ├── cct-api-notes.md          # CCT 接口速查（字段 / 单位 / 坑）
-│   ├── preview-normal.png        # 推图模式预览
-│   ├── preview-gold.png          # 带金模式预览
-│   ├── preview-silver.png        # 带银模式预览
-│   ├── release-notes-v0.1.0.md
-│   ├── release-notes-v0.2.0.md
-│   ├── release-notes-v0.3.0.md
-│   └── release-notes-v0.3.1.md
-├── tools/                    # 排查与自检工具（见 tools/README.md）
-│   ├── diag.ps1                  # 记录 CCT 数据变化（不用装东西）
-│   ├── diagnose.html             # 浏览器版诊断页
-│   ├── check-anim.js             # 覆盖层自动化自检（31 条断言）
-│   ├── check-timing.js           # 计时模块自检（22 条断言）
-│   ├── cct-dump.js               # 一次性打印所有 CCT 字段
-│   └── deploy-overlay.ps1        # 部署到游戏目录（备份 + 校验）
-├── 改动表.md                 # 按版本记录的改动摘要
-├── LICENSE
-└── README.md
+
+编译产物会自动复制到 `LevelWatcher\bin\`。Release 配置下还会额外打包出 `LevelWatcher.zip`：
+
+```bash
+dotnet build -c Release
+```
+
+如果不想把项目放进 Mods 目录，也可以手动指定蔚蓝的安装路径：
+
+```bash
+dotnet build -p:CelestePrefix="D:\Steam\steamapps\common\Celeste"
 ```
 
 ---
