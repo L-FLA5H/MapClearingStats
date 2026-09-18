@@ -133,8 +133,22 @@ flowchart LR
 <Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\
 ```
 
-> ⚠️ CCT 自带同名的 `CCTOverlay.html / .js / .css`，这是 CCT 自带的 UI 界面，本工具的主要改动也就在于此，覆盖前请先备份原文件，否则想用回 CCT 自带界面时会找不回来。
+> ⚠️ **找不到这个目录？** 如果你是第一次装 CCT，**先启动一次游戏**。
+> CCT 会在启动时自动创建这个目录，并把自带的覆盖层文件复制进去。
 
+#### ⚠️ 别放错地方：`Assets\ExternalOverlay\` 是没用的
+
+CCT 的 Mod 包里有**两份**同名文件，很容易搞混：
+
+| 位置 | 是什么 | 游戏读它吗 |
+| --- | --- | --- |
+| `Mods\...ConsistencyTracker.zip` 里的 `Assets\ExternalOverlay\` | CCT **自带的原始副本**，只用来做首次复制 | ❌ **不读** |
+| `ConsistencyTracker\external-tools\ExternalOverlay\` | CCT 运行时复制出来的**工作目录** | ✅ **读这个** |
+
+**判断方法**：看这个目录的上一级是不是 `ConsistencyTracker\`（**和 `Mods` 平级，
+在游戏根目录下**）。如果上面是 `Assets\`，那就放错了。
+
+> ⚠️ CCT 自带同名的 `CCTOverlay.html / .js / .css`，这是 CCT 自带的 UI 界面，本工具的主要改动也就在于此，覆盖前请先备份原文件，否则想用回 CCT 自带界面时会找不回来。
 ### 第 3 步：在游戏里录制一次路径
 
 这一步是**必须的**。CCT 需要先知道这张图有多少小节、多少房间、顺序是什么，方格进度才能画出来。
@@ -205,6 +219,47 @@ CCT 的 API 只在 Everest 的调试模式为 **「仅Everest」或「开」** �
 
 > 第 2、4 条来自 CCT 自带的常见问题：
 > 游戏内 `Mod选项` → `稳定性追踪器` → `常见问题` → `游戏外工具`
+
+---
+
+### 我把文件放进了 `Assets\ExternalOverlay\`，但没效果
+
+**放错地方了。** CCT 的 Mod 包里有**两份**同名文件：
+
+| 位置 | 是什么 | 游戏读它吗 |
+| --- | --- | --- |
+| `Mods\...ConsistencyTracker\Assets\ExternalOverlay\`<br>（或在 `ConsistencyTracker.zip` 里） | CCT **自带的原始副本**，只在首次启动时被复制一次 | ❌ **不读** |
+| `<Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\` | CCT 运行时复制出来的**工作目录** | ✅ **读这个** |
+
+**正确的目录长这样：**
+
+```
+D:\Steam\steamapps\common\Celeste\
+├── Mods\                          ← Mod 都在这
+│   └── ...ConsistencyTracker.zip  ← 里面有 Assets\ExternalOverlay\（别动这个）
+└── ConsistencyTracker\            ← ⚠️ 和 Mods 平级，在游戏根目录下
+    └── external-tools\
+        └── ExternalOverlay\       ← ✅ 覆盖层文件放这里
+            ├── CCTOverlay.html
+            ├── CCTOverlay.js
+            └── CCTOverlay.css
+```
+
+**判断方法**：往上翻一级，看是 `ConsistencyTracker\` 还是 `Assets\`。
+是 `Assets\` 就放错了。
+
+---
+
+### 找不到 `external-tools\ExternalOverlay\` 这个目录
+
+**先启动一次游戏。** CCT 会在启动时自动创建这个目录，并把自带的覆盖层文件复制进去。
+
+如果你已经启动过游戏还是没有，检查：
+
+1. CCT 装好了吗？（在 Everest 的 Mod 列表里能看到 `ConsistencyTracker`）
+2. 有没有别的 CCT 版本把目录建在别处
+
+> 参考：`external-tools` 这个目录名是写死在 CCT 里的（CCT 2.9.8 实测）。
 
 ---
 
