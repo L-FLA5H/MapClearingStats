@@ -285,89 +285,24 @@ let seedDeathsOnly = false;
 // 玩家撞刺死亡 → 草莓掉出去 → 但马上又走到开头拿起，
 // 这个过程如果布局来回切会很花。用一个短冷却窗口吸收掉：
 // 掉草莓后 N 毫秒内若重新拿起，视作同一次挑战，不退出也不重播动画。
-// ===== CctClient：CCT 数据格式的唯一口径 =====
-//
-// CCT 的字段名、goldenType 的反直觉映射、抓占位符的坑——这些「格式知识」
-// 以前散在主代码各处，还在 tools/cct-dump.js 里抄了一份。现在全部收进这个对象。
-//
-// 本区的规矩（tools 和测试靠这个约定工作）：
-//   · **纯函数、零 DOM、零外部引用**（连 dlog 都不用）
-//   · node 工具与测试按 BEGIN/END 标记切片求值复用（见 tools/cct-dump.js、
-//     tools/check-cctclient.js）
-//   · tools/diag.ps1 是给「没装 node 的用户」准备的诊断工具，刻意不依赖任何
-//     JS，它的占位符表单独维护（PowerShell 无法加载 JS 模块）——改本区时请对照
-// ==== CctClient BEGIN（切片标记，勿改此行）====
-const CctClient = (function () {
+// 读「金 / 银」类型。
+// CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
+// ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
+//    所以这里做成**多来源 + 容错**：
+//      · 主来源 stats.chapterStats.goldenType
+//      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
+//        但多读一处没有副作用，将来 CCT 补上了就能直接用）
+//      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
+//    并且把原始值记一条日志，方便在调试面板 / 探针里核对 CCT 到底报了什么。
+let lastGoldenTypeRaw = null;
+function readGoldenType(stats, state) {
+    const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
+    const b = (state && state.modState) ? state.modState.goldenType : undefined;
+    const raw = (a !== undefined && a !== null) ? a
+              : (b !== undefined && b !== null) ? b
+              : 0;
+    const n = Number(raw) || 0;
 
-    // ---- 占位符表 ----
-    // ⚠️⚠️ 这几个占位符是**实测确认**的（2026-09-16 探针 + 直连 CCT）。
-    //
-    // ⚠️⚠️⚠️ 关键教训：CCT 的占位符表藏在 DLL 里，而且是 **UTF-16 编码**，
-    //   用普通 strings / grep 搜不到。必须：
-    //     strings -e l <dll> | grep -oE '\{[a-z]+:[a-zA-Z]+\}'
-    //   一开始只从「CCT 自带覆盖层的默认格式串」里抄了一部分，
-    //   结果把「进入率」错当成 {room:chokeRate}（那是**卡关率**），
-    //   导致第一面的进入率显示 69.57% 而不是 100%。
-    //
-    // 实测对照（房间 a-02，带金通过 2 次 / 进入 11 次）：
-    //   {room:goldenSuccessRate} = 18.18%  ← 带金成功率 = goldenSuccesses/goldenEntries
-    //   {room:goldenSuccesses}   = 2       ← 带金通过数
-    //   {room:goldenEntries}     = 11      ← 带金进入次数
-    //   {room:goldenEntryChance} = 11.96%  ← **带金进入率**（草莓所在那面应为 100%）
-    //   {room:chokeRate}         = 81.82%  ← 卡关率，**不是**进入率
-    //   {run:currentPbStatusNumber} = "-"  ← 「局」要带 Number 后缀的版本
-
-    // 覆盖层用（顺序即 requestGoldenStats / writeGoldenStats 里的下标含义，勿调换）：
-    const GOLDEN_STATS_PLACEHOLDERS = [
-        "{room:goldenSuccessRate}",          // 0 带金成功率
-        "{room:goldenSuccesses}",            // 1 带金通过数
-        "{room:goldenEntries}",              // 2 带金进入次数
-        "{room:goldenEntryChance}",          // 3 带金进入率
-        "{run:currentPbStatusNumber}",       // 4 局数（注意结尾的 Number）
-        "{chapter:goldenDeaths}",            // 5 带金死亡（本章累计）
-        "{chapter:goldenDeathsSession}",     // 6 带金死亡（本次会话）
-    ];
-
-    // 探针全量表（tools/cct-dump.js 用；diag.ps1 取其中 9 项子集、单独维护）：
-    const PROBE_PLACEHOLDERS = [
-        "{room:name}",
-        "{room:debugName}",
-        "{room:roomNumberInChapter}",
-        "{room:goldenSuccessRate}",
-        "{room:goldenSuccesses}",
-        "{room:goldenEntries}",
-        "{room:goldenEntryChance}",
-        "{room:goldenEntryChanceSession}",
-        "{room:chokeRate}",
-        "{room:chokeRateSession}",
-        "{checkpoint:chokeRate}",
-        "{checkpoint:goldenSuccessRate}",
-        "{run:currentPbStatusNumber}",
-        "{run:currentPbStatusSessionNumber}",
-        "{run:currentPbStatus}",
-        "{room:goldenDeaths}",
-        "{room:goldenDeathsSession}",
-        "{chapter:goldenDeaths}",
-        "{chapter:goldenDeathsSession}",
-        "{room:successRate}",
-        "{room:successes}",
-        "{room:attempts}",
-        "{room:currentStreak}",
-        "{checkpoint:currentStreak}",
-        "{chapter:roomCount}",
-        "{pb:best}",
-        "{pb:bestSession}",
-    ];
-
-    // ---- goldenType 映射 ----
-    // CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
-    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
-    //    所以做成**多来源 + 容错**：
-    //      · 主来源 stats.chapterStats.goldenType
-    //      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
-    //        但多读一处没有副作用，将来 CCT 补上了就能直接用）
-    //      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
-    //
     // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名猜：
     //     带银（Scroogle 章）      → goldenType = 1
     //     带金（ZZ-HeartSide 章）  → goldenType = 0
@@ -376,58 +311,16 @@ const CctClient = (function () {
     //   → 所以：0 = 金，非 0 = 银。
     // ⚠️ 之前写成「1 = 金、2 = 银」是错的，这正是小闪反馈
     //    「带银时卡片没变银而是变金」的根因。
-    function goldenType(stats, state) {
-        const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
-        const b = (state && state.modState) ? state.modState.goldenType : undefined;
-        const raw = (a !== undefined && a !== null) ? a
-                  : (b !== undefined && b !== null) ? b
-                  : 0;
-        const n = Number(raw) || 0;
-        const isSilver = (n !== 0);
-        // 把两个来源的原始值一并带回，方便调用方打日志核对
-        return { raw: n, isSilver, fromChapterStats: a, fromModState: b };
-    }
+    const isSilver = (n !== 0);
 
-    // ---- 快照归一化 ----
-    // state.currentRoom / state.modState 的原始字段以前在 detectDeaths、
-    // buildStreakAttempts、reconcileSession 等处各自直取；现在统一走这里，
-    // null 安全，CCT 改字段名时只改这一处。
-    // ⚠️ previousAttempts 实测**只在换房时刷新**（带金挑战期间连死 4 次，
-    //    长度和内容完全不变）——覆盖层靠「实时增量」兜底（见 noteGoldenProgress）。
-    function snapshot(state) {
-        const room = (state && state.currentRoom) || {};
-        const mod = (state && state.modState) || {};
-        return {
-            chapterName: (state && state.chapterName) || "",
-            room: room.debugRoomName || "",
-            holdingGolden: !!mod.playerIsHoldingGolden,
-            trackingPaused: !!mod.deathTrackingPaused,
-            deathsInCurrentRun: room.deathsInCurrentRun || 0,
-            previousAttempts: Array.isArray(room.previousAttempts) ? room.previousAttempts : [],
-            goldenBerryDeaths: room.goldenBerryDeaths || 0,
-            goldenBerryDeathsSession: room.goldenBerryDeathsSession || 0,
-            // streakBest 的历史基准（renderStreak 用）；streak 本身从拼好的序列末尾数
-            successStreak: room.successStreak || 0,
-            successStreakBest: room.successStreakBest || 0,
-        };
-    }
-
-    return { goldenType, snapshot, GOLDEN_STATS_PLACEHOLDERS, PROBE_PLACEHOLDERS };
-})();
-// ==== CctClient END ====
-
-let lastGoldenTypeRaw = null;
-function readGoldenType(stats, state) {
-    const gt = CctClient.goldenType(stats, state);
-
-    if (lastGoldenTypeRaw !== gt.raw) {
-        lastGoldenTypeRaw = gt.raw;
-        dlog("◆ goldenType = " + gt.raw + "（按" + (gt.isSilver ? "银" : "金") + "渲染）"
-             + "｜chapterStats=" + gt.fromChapterStats + " · modState=" + gt.fromModState);
+    if (lastGoldenTypeRaw !== n) {
+        lastGoldenTypeRaw = n;
+        dlog("◆ goldenType = " + n + "（按" + (isSilver ? "银" : "金") + "渲染）"
+             + "｜chapterStats=" + a + " · modState=" + b);
     }
 
     // 归一化：金返回 0，银返回 2（上层用 `=== 2` 判银）
-    return gt.isSilver ? 2 : 0;
+    return isSilver ? 2 : 0;
 }
 
 let goldenModeChapter = null;   // 当前判定的章节名
@@ -742,7 +635,7 @@ function reconcileSession(state, path) {
         dstate("章节变化-改之后");
     }
 
-    const currentRoom = CctClient.snapshot(state).room;
+    const currentRoom = state.currentRoom?.debugRoomName || "";
 
     // 「返回地图时进度没保留」检测：
     // 走「返回地图」这条路时章节名会先变成大厅再变回来，所以必然会经过 loadChapterHistory。
@@ -776,17 +669,22 @@ function resolveGoldenMode(state, stats, currentRoom) {
 
     // ⚠️ 这里只在「刚拿起金草莓」或「金银类型确定」时才会返回 true，用来驱动一次重绘。
     //    平时返回 false，避免每 500ms 无谓重排。
-    const snap = CctClient.snapshot(state);
+    const modState = state.modState || {};
 
     // CCT 是否暂停了死亡追踪 —— 每次 tick 刷新，供 requestGoldenStats 判断
     // 要不要用「实时增量」兜底（见 noteGoldenProgress 的注释）。
     // ⚠️ 实测小闪的 CCT 里「暂停死亡追踪」是开着的，
     //    此时 previousAttempts 完全不更新，只能靠带金增量兜底。
-    lastTrackingPaused = snap.trackingPaused;
-    // 金 / 银类型的容错与映射在 CctClient 里（见文件顶部 CctClient 分区）。
+    lastTrackingPaused = !!modState.deathTrackingPaused;
+    // 金 / 银类型。
+    // ⚠️ 两个来源都试：CCT 的 chapterStats.goldenType 是主来源，
+    //    modState.goldenType 只是保险（实测 modState 里没有这个字段，
+    //    但多读一处不会有副作用，将来 CCT 加上了就能直接用上）。
+    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 如果 CCT 报的 goldenType 一直是 0，
+    //    这里就会一直按金色渲染。已加 dlog，可在调试面板看到真实取值。
     const goldenType = readGoldenType(stats, state);
     const goldenChanged = updateGoldenMode(
-        state.chapterName || "", goldenType, snap.holdingGolden, diedNow);
+        state.chapterName || "", goldenType, !!modState.playerIsHoldingGolden, diedNow);
 
     // 「本次一命挑战累计用时」：只在真正带金挑战期间累积
     const now = Date.now();
@@ -1029,7 +927,7 @@ function renderSectionsEmptyWithText(text) { renderOutsideText(text); }
 function renderSectionsOutside() { renderOutsideText("当前不在路径中"); }
 
 function detectDeaths(state, stats, currentRoom) {
-    const curDeaths = CctClient.snapshot(state).deathsInCurrentRun;
+    const curDeaths = state.currentRoom?.deathsInCurrentRun || 0;
     if (!session.lastCurDeaths) session.lastCurDeaths = {};
     const prevCur = session.lastCurDeaths[currentRoom] || 0;
     let delta = 0;
@@ -1463,10 +1361,9 @@ function noteGoldenProgress(entriesStr, succStr, paused) {
 }
 
 // 把「历史基准 + 本次增量」拼成完整的尝试序列
-function buildStreakAttempts(snap) {
-    // 传入 CctClient.snapshot(state)（previousAttempts 已做数组化兜底）
-    const base = snap ? snap.previousAttempts : [];
-    const room = snap ? snap.room : "";
+function buildStreakAttempts(cr) {
+    const base = (cr && Array.isArray(cr.previousAttempts)) ? cr.previousAttempts : [];
+    const room = (cr && cr.debugRoomName) || "";
 
     if (room !== liveGolden.room || base.length !== liveGolden.baseLen) {
         if (room !== liveGolden.room) {
@@ -1505,11 +1402,31 @@ async function requestGoldenStats(roomName, force) {
     goldenStats.at = now;
     goldenStats.room = roomName;
     try {
-        // 占位符表在 CctClient.GOLDEN_STATS_PLACEHOLDERS（单一来源，
-        // 实测对照与「UTF-16 抓取」的教训都记在那边）。
-        // 下标含义：0 成功率 / 1 通过数 / 2 进入次数 / 3 进入率 / 4 局数 /
-        //           5 带金死亡（本章）/ 6 带金死亡（本次会话）
-        const out = await parseFormats(CctClient.GOLDEN_STATS_PLACEHOLDERS);
+        // ⚠️⚠️ 这几个占位符是**实测确认**的（2026-09-16 探针 + 直连 CCT）。
+        //
+        // ⚠️⚠️⚠️ 关键教训：CCT 的占位符表藏在 DLL 里，而且是 **UTF-16 编码**，
+        //   用普通 strings / grep 搜不到。必须：
+        //     strings -e l <dll> | grep -oE '\{[a-z]+:[a-zA-Z]+\}'
+        //   我一开始只从「CCT 自带覆盖层的默认格式串」里抄了一部分，
+        //   结果把「进入率」错当成 {room:chokeRate}（那是**卡关率**），
+        //   导致第一面的进入率显示 69.57% 而不是 100%。
+        //
+        // 实测对照（房间 a-02，带金通过 2 次 / 进入 11 次）：
+        //   {room:goldenSuccessRate} = 18.18%  ← 带金成功率 = goldenSuccesses/goldenEntries
+        //   {room:goldenSuccesses}   = 2       ← 带金通过数
+        //   {room:goldenEntries}     = 11      ← 带金进入次数
+        //   {room:goldenEntryChance} = 11.96%  ← **带金进入率**（草莓所在那面应为 100%）
+        //   {room:chokeRate}         = 81.82%  ← 卡关率，**不是**进入率
+        //   {run:currentPbStatusNumber} = "-"  ← 「局」要带 Number 后缀的版本
+        const out = await parseFormats([
+            "{room:goldenSuccessRate}",          // 0 带金成功率
+            "{room:goldenSuccesses}",            // 1 带金通过数
+            "{room:goldenEntries}",              // 2 带金进入次数
+            "{room:goldenEntryChance}",          // 3 带金进入率
+            "{run:currentPbStatusNumber}",       // 4 局数（注意结尾的 Number）
+            "{chapter:goldenDeaths}",            // 5 带金死亡（本章累计）
+            "{chapter:goldenDeathsSession}",     // 6 带金死亡（本次会话）
+        ]);
         writeGoldenStats(out);
         // 走势条用这两个量做「实时增量」——见 liveGolden 那段注释
         // ⚠️ 只在 CCT 暂停死亡追踪时才需要（否则 previousAttempts 本身就是实时的，
@@ -1834,10 +1751,10 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
     if (!strip || !dotsEl) return;
 
     // 不在关卡内 / CCT 没数据 / 换了房间 / 不是一命挑战模式 → 隐藏并重置状态
-    const snap = (valid && isGoldenMode) ? CctClient.snapshot(state) : null;
-    // ⚠️ 不能直接用 snap.previousAttempts —— 它只在换房间时才刷新（见 liveGolden 注释）。
+    const cr = (valid && isGoldenMode) ? (state.currentRoom || {}) : null;
+    // ⚠️ 不能直接用 cr.previousAttempts —— 它只在换房间时才刷新（见 liveGolden 注释）。
     //    这里用「历史基准 + 本次观测到的实时增量」拼出完整序列。
-    const attempts = snap ? buildStreakAttempts(snap) : null;
+    const attempts = cr ? buildStreakAttempts(cr) : null;
 
     if (!attempts || attempts.length === 0) {
         // ⚠️⚠️ 一命模式下**即使没有数据也要把整条留着**，只是内容显示占位。
@@ -1883,11 +1800,11 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
 
     // 真正的「连续成功」看 CCT 的 successStreak（best 是历史最高）
     // 连续通过：从**拼好的序列**末尾数连续 1。
-    // ⚠️ 不用 snap.successStreak —— 那是 CCT 基于旧的 previousAttempts 算的，
+    // ⚠️ 不用 cr.successStreak —— 那是 CCT 基于旧的 previousAttempts 算的，
     //    我们接了实时增量之后，末尾可能已经多出几次尝试了。
     let streak = 0;
     for (let i = attempts.length - 1; i >= 0 && attempts[i]; i--) streak++;
-    const streakBest = Math.max(snap.successStreakBest || 0, streak);
+    const streakBest = Math.max(cr.successStreakBest || 0, streak);
     if (bestEl) bestEl.textContent = String(streak);
     // 最高连续通过（小闪要学 CCT 的「近期/最高」格式）
     if (bestMaxEl) bestMaxEl.textContent = String(streakBest);
