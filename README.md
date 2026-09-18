@@ -127,11 +127,24 @@ flowchart LR
 
 ### 第 2 步：配置覆盖层页面
 
-将 `ExternalOverlay` 里的 **3 个文件**覆盖到 CCT 的覆盖层目录：
+将 zip 里的 `ExternalOverlay` 文件夹**整个覆盖**到 CCT 的覆盖层目录：
 
 ```
 <Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\
 ```
+
+覆盖完之后，那个目录里应该是这些文件（**数量随版本变化，以 zip 里的为准**）：
+
+| 文件 | 说明 |
+| --- | --- |
+| `CCTOverlay.html` | 页面结构 |
+| `CCTOverlay.js` | 主逻辑 |
+| `CCTOverlay.css` | 样式 |
+| `Timing.js` | 房间用时计时模块 |
+| `img/` | CCT 自带的图片资源，**不用动** |
+
+> ⚠️ **要整个文件夹一起覆盖，别只挑几个文件。** 文件之间是有依赖的
+> （比如 `CCTOverlay.js` 需要 `Timing.js`），缺一个就会报错、界面出不来。
 
 > ⚠️ **找不到这个目录？** 如果你是第一次装 CCT，**先启动一次游戏**。
 > CCT 会在启动时自动创建这个目录，并把自带的覆盖层文件复制进去。
@@ -149,6 +162,7 @@ CCT 的 Mod 包里有**两份**同名文件，很容易搞混：
 在游戏根目录下**）。如果上面是 `Assets\`，那就放错了。
 
 > ⚠️ CCT 自带同名的 `CCTOverlay.html / .js / .css`，这是 CCT 自带的 UI 界面，本工具的主要改动也就在于此，覆盖前请先备份原文件，否则想用回 CCT 自带界面时会找不回来。
+
 ### 第 3 步：在游戏里录制一次路径
 
 这一步是**必须的**。CCT 需要先知道这张图有多少小节、多少房间、顺序是什么，方格进度才能画出来。
@@ -242,7 +256,8 @@ D:\Steam\steamapps\common\Celeste\
         └── ExternalOverlay\       ← ✅ 覆盖层文件放这里
             ├── CCTOverlay.html
             ├── CCTOverlay.js
-            └── CCTOverlay.css
+            ├── CCTOverlay.css
+            └── Timing.js
 ```
 
 **判断方法**：往上翻一级，看是 `ConsistencyTracker\` 还是 `Assets\`。
@@ -331,7 +346,8 @@ MapClearingStats/
 ├── ExternalOverlay/          # 前端覆盖层，覆盖到 CCT 的 external-tools/ExternalOverlay/
 │   ├── CCTOverlay.html
 │   ├── CCTOverlay.js
-│   └── CCTOverlay.css
+│   ├── CCTOverlay.css
+│   └── Timing.js
 ├── LevelWatcher/             # 辅助 Mod，放进 Mods/
 │   ├── everest.yaml
 │   ├── LevelWatcher.sln
@@ -353,6 +369,7 @@ MapClearingStats/
 │   ├── diag.ps1                  # 记录 CCT 数据变化（不用装东西）
 │   ├── diagnose.html             # 浏览器版诊断页
 │   ├── check-anim.js             # 覆盖层自动化自检（31 条断言）
+│   ├── check-timing.js           # 计时模块自检（22 条断言）
 │   ├── cct-dump.js               # 一次性打印所有 CCT 字段
 │   └── deploy-overlay.ps1        # 部署到游戏目录（备份 + 校验）
 ├── 改动表.md                 # 按版本记录的改动摘要
