@@ -406,6 +406,9 @@ const CctClient = (function () {
             previousAttempts: Array.isArray(room.previousAttempts) ? room.previousAttempts : [],
             goldenBerryDeaths: room.goldenBerryDeaths || 0,
             goldenBerryDeathsSession: room.goldenBerryDeathsSession || 0,
+            // streakBest 的历史基准（renderStreak 用）；streak 本身从拼好的序列末尾数
+            successStreak: room.successStreak || 0,
+            successStreakBest: room.successStreakBest || 0,
         };
     }
 
@@ -1880,11 +1883,11 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
 
     // 真正的「连续成功」看 CCT 的 successStreak（best 是历史最高）
     // 连续通过：从**拼好的序列**末尾数连续 1。
-    // ⚠️ 不用 cr.successStreak —— 那是 CCT 基于旧的 previousAttempts 算的，
+    // ⚠️ 不用 snap.successStreak —— 那是 CCT 基于旧的 previousAttempts 算的，
     //    我们接了实时增量之后，末尾可能已经多出几次尝试了。
     let streak = 0;
     for (let i = attempts.length - 1; i >= 0 && attempts[i]; i--) streak++;
-    const streakBest = Math.max(cr.successStreakBest || 0, streak);
+    const streakBest = Math.max(snap.successStreakBest || 0, streak);
     if (bestEl) bestEl.textContent = String(streak);
     // 最高连续通过（小闪要学 CCT 的「近期/最高」格式）
     if (bestMaxEl) bestMaxEl.textContent = String(streakBest);
