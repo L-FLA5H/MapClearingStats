@@ -35,35 +35,32 @@ function get(path) {
     });
 }
 
-const FMTS = [
-    "{room:name}",
-    "{room:debugName}",
-    "{room:roomNumberInChapter}",
-    "{room:goldenSuccessRate}",
-    "{room:goldenSuccesses}",
-    "{room:goldenEntries}",
-    "{room:goldenEntryChance}",
-    "{room:goldenEntryChanceSession}",
-    "{room:chokeRate}",
-    "{room:chokeRateSession}",
-    "{checkpoint:chokeRate}",
-    "{checkpoint:goldenSuccessRate}",
-    "{run:currentPbStatusNumber}",
-    "{run:currentPbStatusSessionNumber}",
-    "{run:currentPbStatus}",
-    "{room:goldenDeaths}",
-    "{room:goldenDeathsSession}",
-    "{chapter:goldenDeaths}",
-    "{chapter:goldenDeathsSession}",
-    "{room:successRate}",
-    "{room:successes}",
-    "{room:attempts}",
-    "{room:currentStreak}",
-    "{checkpoint:currentStreak}",
-    "{chapter:roomCount}",
-    "{pb:best}",
-    "{pb:bestSession}",
-];
+// 占位符表不再在这里抄一份 —— 从 CCTOverlay.js 的 CctClient 分区切片求值（单一来源）。
+// CctClient 分区是「纯函数、零 DOM、零外部引用」的约定区，可以安全地在 Node 里求值。
+const fs = require('fs');
+const path = require('path');
+
+function loadCctClient() {
+    const src = fs.readFileSync(
+        path.join(__dirname, '..', 'ExternalOverlay', 'CCTOverlay.js'), 'utf8');
+    const begin = src.indexOf('// ==== CctClient BEGIN');
+    const end = src.indexOf('// ==== CctClient END');
+    if (begin < 0 || end < 0 || end < begin) {
+        throw new Error('CCTOverlay.js 里找不到 CctClient BEGIN/END 切片标记');
+    }
+    const section = src.slice(begin, end);
+    return new Function(section + '\nreturn CctClient;')();
+}
+
+let CctClient;
+try {
+    CctClient = loadCctClient();
+} catch (e) {
+    console.error('✗ ' + e.message);
+    process.exit(1);
+}
+
+const FMTS = CctClient.PROBE_PLACEHOLDERS;
 
 (async () => {
     console.log('===== parseFormat 逐项 =====');

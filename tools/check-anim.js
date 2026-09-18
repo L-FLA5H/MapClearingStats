@@ -385,6 +385,126 @@ function check(name, ok, detail) {
         seed.roomDeaths === 0, 'roomDeaths=' + seed.roomDeaths);
     check('重开章节会清掉成功率补间',
         misc.rateTweenCleared === true, 'rateTweenCleared=' + misc.rateTweenCleared);
+
+    // ============ ⑧ 小节太多时开窗 + 已通过标绿 ============
+    // 起因：9 个小节时全部铺开，字号被压到 12px、方格看不清；而且 .dist-N 的颜色
+    // 规则优先级压过了 .cleared，已经打过的小节显示成灰色。
+    console.log('');
+    console.log('== ⑧ 小节太多时开窗 + 已通过标绿 ==');
+
+    const NAMES9 = ['ST','金属','遗弃','我最','机器','零落','工匠','遗存','终局'];
+
+    async function loadSections(cpCount, curCp) {
+        const spec = [];
+        for (let i = 0; i < cpCount; i++) spec.push([NAMES9[i] || ('CP' + i), 20]);
+        await send('Page.addScriptToEvaluateOnNewDocument', {
+            source: 'window.__SPEC = ' + JSON.stringify(spec) +
+                    '; window.__CUR = [' + curCp + ',2];'
+        });
+        await send('Page.navigate', { url: 'file:///' + OUT.replace(/\\/g, '/') + '/anim_case.html' });
+        await sleep(2500);
+        return JSON.parse(await ev(`(function(){
+            const wrap = document.getElementById("sections");
+            const secs = wrap.querySelectorAll(".section");
+            const o = { rendered: 0, currentLabel: "", cleared: [], clearedColor: [],
+                        opacities: [], currentWidth: 0 };
+            secs.forEach(function(s){
+                o.rendered++;
+                // ⚠️ 读子元素的 opacity —— 淡出加在 .name/.count 上，不在 .section 上
+                const nameEl = s.querySelector(".name");
+                o.opacities.push(getComputedStyle(nameEl || s).opacity);
+                if (s.classList.contains("current")) {
+                    const n = s.querySelector(".name");
+                    o.currentLabel = n ? n.textContent : "";
+                    o.currentWidth = Math.round(s.getBoundingClientRect().width);
+                }
+                if (s.classList.contains("cleared")) {
+                    const nm = s.querySelector(".name");
+                    const ct = s.querySelector(".count");
+                    o.cleared.push(nm ? nm.textContent : "?");
+                    o.clearedColor.push(ct ? getComputedStyle(ct).color : "");
+                }
+            });
+            return JSON.stringify(o);
+        })()`));
+    }
+
+    const many = await loadSections(9, 4);
+    check('9 个小节：全部渲染（不做硬截断）',
+        many.rendered === 9, '渲染了 ' + many.rendered + ' 个');
+    check('9 个小节：当前小节在中间',
+        many.currentLabel === '机器', '当前=' + many.currentLabel);
+    check('已通过的小节带 cleared 类',
+        many.cleared.length > 0, 'cleared=' + JSON.stringify(many.cleared));
+    check('已通过的小节显示为绿色（不是被 .dist-N 的灰色盖掉）',
+        many.clearedColor.length > 0 &&
+        many.clearedColor.every(function(c){ return c === 'rgb(126, 201, 138)'; }),
+        '颜色=' + JSON.stringify(many.clearedColor));
+    // 透明度按距离对称淡出：中间（当前）是 1，两端最淡
+    const op = many.opacities.map(parseFloat);
+    const mid = op[Math.floor(op.length / 2)];
+    check('远端小节逐渐淡出（中间不透明、两端最淡，不是硬截断）',
+        op.length >= 5 && mid === 1 &&
+        op[0] < 0.5 && op[op.length - 1] < 0.5 &&
+        op[0] < op[1] && op[1] < op[2],
+        '透明度=' + JSON.stringify(many.opacities));
+
+    const far = await loadSections(15, 7);
+    check('15 个小节：只渲染当前 ±4（更远的已几乎全透明）',
+        far.rendered === 9, '渲染了 ' + far.rendered + ' 个');
+
+    const few = await loadSections(6, 1);
+    check('6 个小节：全部渲染',
+        few.rendered === 6, '渲染 ' + few.rendered + ' 个');
+    check('6 个小节：不做淡出（没有 dist 类）',
+        few.opacities.every(function(o){ return o === '1'; }),
+        '透明度=' + JSON.stringify(few.opacities));
+
+    check('当前小节的方格够大（不是被压成小圆点）',
+        many.currentWidth >= 92, '当前列宽 ' + many.currentWidth + 'px');
+
+
+    // ============ ⑩ 第三张卡片也要变金 ============
+    // 起因：小闪实测「带金的时候第三张卡片没变金」。
+    // 根因：.sections-card.cleared-flash::after 是绿色图层（攻下小节时的绿光），
+    // 它和 .card.fly-in::after 优先级相同、但写在后面，而且 .cleared-flash
+    // 加上去之后从不摘掉 —— 所以攻下过一个小节之后，镀金扫光扫到第三张卡片
+    // 时用的是绿色图层。修法：让绿色规则在 .fly-in / .fly-out 期间不匹配。
+    console.log('');
+    console.log('== ⑩ 第三张卡片也要变金 ==');
+
+    const cardLayer = JSON.parse(await ev(`(function(){
+        const card = document.getElementById("sections-card");
+        function probe(){
+            const a = getComputedStyle(card, "::after");
+            return {
+                anim: a.animationName,
+                gold: a.backgroundImage.indexOf("241, 196, 15") >= 0,
+                green: a.backgroundImage.indexOf("126, 201, 138") >= 0,
+            };
+        }
+        card.classList.remove("fly-in", "fly-out");
+        card.classList.add("cleared-flash");
+        const onlyFlash = probe();
+        card.classList.add("fly-in");
+        const flyIn = probe();
+        card.classList.remove("fly-in");
+        card.classList.add("fly-out");
+        const flyOut = probe();
+        card.classList.remove("fly-out", "cleared-flash");
+        return JSON.stringify({ onlyFlash: onlyFlash, flyIn: flyIn, flyOut: flyOut });
+    })()`));
+
+    check('攻下小节的绿光还在（没被改坏）',
+        cardLayer.onlyFlash.green && cardLayer.onlyFlash.anim === 'sweep',
+        'anim=' + cardLayer.onlyFlash.anim);
+    check('镀金扫光时第三张卡片是金色图层（不是绿色）',
+        cardLayer.flyIn.gold && !cardLayer.flyIn.green,
+        'anim=' + cardLayer.flyIn.anim);
+    check('退出扫光时第三张卡片也是金色图层',
+        cardLayer.flyOut.gold && !cardLayer.flyOut.green,
+        'anim=' + cardLayer.flyOut.anim);
+
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);
