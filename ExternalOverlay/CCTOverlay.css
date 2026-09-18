@@ -1068,7 +1068,13 @@ html, body {
 /* ---- 5. 攻下一个小节：卡片边缘扫过一道光 ---- */
 /* ⚠️ 必须给默认 opacity: 0 —— 动画没有 forwards，结束后元素仍在，
       不隐藏的话会在卡片上残留一条绿色光带 */
-.sections-card.cleared-flash::after {
+/* ⚠️⚠️ 必须排除 .fly-in / .fly-out —— 镀金扫光期间要让位。
+   两条规则优先级相同（都是 2 个类），而这条写在 .card.fly-in::after 之后，
+   所以只要 .cleared-flash 挂着，第三张卡片的 ::after 就一直是绿色图层，
+   镀金扫光扫到它的时候扫出来是绿的 —— 看起来就是「第三张卡片没变金」。
+   ⚠️ 而且 .cleared-flash 加上去之后从不摘掉（见 renderSections），
+   所以攻下过一个小节之后就会一直这样。 */
+.sections-card.cleared-flash:not(.fly-in):not(.fly-out)::after {
     content: "";
     position: absolute;
     top: 0; bottom: 0;
