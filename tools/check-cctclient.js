@@ -79,6 +79,8 @@ console.log('=== 2. snapshot：字段归一化与 null 安全 ===');
             previousAttempts: [true, false, true],
             goldenBerryDeaths: 5,
             goldenBerryDeathsSession: 2,
+            successStreak: 4,
+            successStreakBest: 7,
         },
         modState: { playerIsHoldingGolden: true, deathTrackingPaused: true },
     };
@@ -90,11 +92,14 @@ console.log('=== 2. snapshot：字段归一化与 null 安全 ===');
     check('deathsInCurrentRun 直通', s.deathsInCurrentRun === 3);
     check('previousAttempts 数组直通', Array.isArray(s.previousAttempts) && s.previousAttempts.length === 3);
     check('带金死亡字段直通', s.goldenBerryDeaths === 5 && s.goldenBerryDeathsSession === 2);
+    check('successStreak/Best 直通（streakBest 的历史基准，缺了会悄悄退化）',
+        s.successStreak === 4 && s.successStreakBest === 7);
 
     s = CctClient.snapshot(null);
     check('null state → 全空快照，不抛错',
         s.room === '' && s.holdingGolden === false && s.deathsInCurrentRun === 0
-        && Array.isArray(s.previousAttempts) && s.previousAttempts.length === 0);
+        && Array.isArray(s.previousAttempts) && s.previousAttempts.length === 0
+        && s.successStreak === 0 && s.successStreakBest === 0);
 
     s = CctClient.snapshot({ currentRoom: { previousAttempts: '不是数组' } });
     check('previousAttempts 非数组 → 空数组兜底', Array.isArray(s.previousAttempts) && s.previousAttempts.length === 0);
@@ -127,7 +132,7 @@ console.log('=== 3. 占位符表：顺序即下标含义，勿调换 ===');
         !G.includes('{room:chokeRate}') && P.includes('{room:chokeRate}'));
 }
 
-console.log('=== 4. 部署结构不变：覆盖层仍是三个文件 ===');
+console.log('=== 4. 部署结构不变：HTML 两脚本、$FILES 四项 ===');
 {
     const html = fs.readFileSync(
         path.join(__dirname, '..', 'ExternalOverlay', 'CCTOverlay.html'), 'utf8');
