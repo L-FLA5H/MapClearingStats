@@ -2628,6 +2628,21 @@ async function enterFloatMode() {
         setNotice("悬浮窗口打开失败：" + (e && e.message ? e.message : e));
         return;
     }
+    // ⚠️⚠️ 先确认拿到的是「另一个窗口」。
+    //   实测 QQ 浏览器（极速内核）：requestWindow 会返回一个窗口对象，
+    //   但那个窗口和你看到的**不是同一个** —— 写进去的内容根本不显示，
+    //   结果只留一个空白的 about:blank 窗口，而且主界面已经被 .floating-out 变灰了。
+    //   所以这里必须先验，验不过就当不支持处理。
+    if (!pip || pip === window || !pip.document || pip.document === document) {
+        // ⚠️ 只有确实是「另一个窗口」才关 —— pip 可能就是主窗口，别把自己关了
+        try { if (pip && pip !== window && pip.close) pip.close(); } catch (e2) { /* 关不掉就算了 */ }
+        pipWindow = null;
+        document.body.classList.add("no-pip");     // 按钮也别再显示了
+        setNotice("这个浏览器不支持置顶悬浮窗口，请用 Chrome / Edge 116 以上版本打开本页面。");
+        dlog("✗ requestWindow 返回的不是独立窗口，判定为不支持");
+        return;
+    }
+
     pipWindow = pip;
 
     // ⚠️⚠️ 从这一步开始全部包在 try 里：一旦失败要**立刻把悬浮窗口关掉**，

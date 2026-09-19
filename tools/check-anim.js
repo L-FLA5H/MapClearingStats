@@ -569,9 +569,14 @@ function check(name, ok, detail) {
         out.mainLabelBack = mainLabel ? mainLabel.textContent : "(无)";
 
         // 收尾：还原，别影响后面
+        // ⚠️ pipWindow 也要清掉 —— 不清的话下一次 enterFloatMode 会直接 return
         pipSuspended = false;
+        pipWindow = null;
         document.body.classList.remove("floating-out");
-        iframe.remove();
+        // ⚠️ 故意**不移除** iframe —— 移除会触发 pagehide，
+        //    而 pagehide 处理器里是 location.reload()，会把主页面重载掉，
+        //    后面的测试就全在「脚本还没跑完」的新页面里跑了（表现为 enterFloatMode is not defined）。
+        //    iframe 留在 left:-9999px 上不影响别的。
         delete window.documentPictureInPicture;
         return JSON.stringify(out);
     })()`));
@@ -591,6 +596,49 @@ function check(name, ok, detail) {
     check('悬浮窗口里按钮显示「还原」', floatFlow.mainLabelFloat === '还原',
         floatFlow.mainLabelBefore + ' → ' + floatFlow.mainLabelFloat);
     check('回到主窗口按钮又变回「置顶悬浮」', floatFlow.mainLabelBack === '置顶悬浮', floatFlow.mainLabelBack);
+
+    // ⚠️ 回归：QQ 浏览器（极速内核）的 requestWindow 会返回**同一个窗口**，
+    //    写进去的内容根本不显示 —— 结果只留一个空白窗口，而且主界面已经被变灰了。
+    //    守卫必须在克隆之前拦下来。
+    //
+    // ⚠️ 这里分两步做：先触发（不 await），再单独读状态。
+    //    直接在 async IIFE 里 return JSON.stringify(...) 会被 CDP 处理成对象，
+    //    JSON.parse 会报 "[object Object]" is not valid JSON。
+    await ev(`(function(){
+        Object.defineProperty(window, "documentPictureInPicture", {
+            value: { requestWindow: async function(){ return window; } },
+            configurable: true,
+        });
+        window.__guardDone = false;
+        window.__guardErr = "";
+        try {
+            enterFloatMode().then(function(){ window.__guardDone = true; },
+                                  function(e){ window.__guardErr = String(e && e.message || e); window.__guardDone = true; });
+        } catch (e) { window.__guardErr = "sync: " + e.message; }
+        return "started";
+    })()`);
+    await sleep(600);
+
+    const guard = JSON.parse(await ev(`(function(){
+        const out = {
+            suspended: pipSuspended,
+            dimmed: document.body.classList.contains("floating-out"),
+            noPip: document.body.classList.contains("no-pip"),
+            notice: (document.getElementById("notice") || {}).textContent || "",
+            label: (document.getElementById("float-btn-text") || {}).textContent || "",
+        };
+        pipSuspended = false;
+        document.body.classList.remove("floating-out", "no-pip");
+        delete window.documentPictureInPicture;
+        delete window.__guardDone;
+        return JSON.stringify(out);
+    })()`));
+
+    check('返回同一个窗口时：不当成悬浮（不挂起主窗口）', guard.suspended === false);
+    check('返回同一个窗口时：主界面不变灰', guard.dimmed === false);
+    check('返回同一个窗口时：按钮不再显示（加 .no-pip）', guard.noPip === true);
+    check('返回同一个窗口时：给出明确提示', /不支持置顶悬浮/.test(guard.notice), guard.notice);
+    check('返回同一个窗口时：按钮文案不变', guard.label === '置顶悬浮', guard.label);
     check('克隆结构里的脚本标签保留了（innerHTML 插的不会执行）', srcs.length >= 2,
         JSON.stringify(srcs));
     check('两个脚本被追加进悬浮窗口（路径从 DOM 取，没写死）',
