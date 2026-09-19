@@ -1177,3 +1177,24 @@ body.floating-out #app {
     filter: grayscale(1);
     pointer-events: none;
 }
+
+
+/* ===== 悬浮窗口专属样式 =====
+   只在 Document PiP 窗口里生效（脚本给 body 加 .pip-window）。
+
+   ⚠️ 覆盖层平时**故意不设背景色** —— OBS 的浏览器源要透明，设了就会有底色。
+      但浏览器里默认是白底，悬浮窗口看起来就是「三张卡片漂在一片白上」。
+      所以这里只给悬浮窗口补一个深色底，主窗口不受影响。 */
+body.pip-window {
+    background: #0b0b0e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* 内容整体缩放时以中心为原点，配合上面的居中 */
+body.pip-window #app {
+    transform-origin: center center;
+    flex: 0 0 auto;
+}

@@ -2713,6 +2713,19 @@ function wireFloatButton() {
     const label = document.getElementById("float-btn-text");
     if (!btn) return;
 
+    // ⚠️ 悬浮窗口里要做三件事（主窗口不做）：
+    //   ① 加 .pip-window 去掉白底（覆盖层平时故意没有背景色，OBS 里要透明）
+    //   ② 内容居中（不然窗口比内容高时，卡片全堆在顶上）
+    //   ③ 内容按窗口大小整体缩放 —— 这样「拖动窗口边缘」就能缩放内容，
+    //      不用去按 Ctrl+滚轮调浏览器缩放
+    if (pipIsFloatWindow) {
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        window.addEventListener("resize", fitFloatContent);
+        // 卡片高度会随内容变（一命模式、走势条），定期重算一下
+        setInterval(fitFloatContent, 800);
+    }
+
     if (label) label.textContent = pipIsFloatWindow ? "还原" : "置顶悬浮";
     btn.title = pipIsFloatWindow
         ? "关掉悬浮窗口，回到浏览器页面里显示"
@@ -2722,4 +2735,19 @@ function wireFloatButton() {
         if (pipIsFloatWindow) exitFloatMode();
         else enterFloatMode();
     });
+}
+
+// 悬浮窗口里：让覆盖层整体缩放，刚好放进窗口。
+// ⚠️ offsetWidth / offsetHeight 不受 transform 影响，所以量到的是「自然尺寸」，
+//    不会因为上一次缩放而越量越小。
+const FLOAT_SCALE_MAX = 1.6;
+function fitFloatContent() {
+    const app = document.getElementById("app");
+    if (!app) return;
+    const w = app.offsetWidth || 0;
+    const h = app.offsetHeight || 0;
+    if (!w || !h) return;
+    const scale = Math.min(window.innerWidth / w, window.innerHeight / h, FLOAT_SCALE_MAX);
+    // 贴着 1 的时候不写 transform，省得白加一层合成
+    app.style.transform = (Math.abs(scale - 1) < 0.005) ? "" : "scale(" + scale.toFixed(4) + ")";
 }

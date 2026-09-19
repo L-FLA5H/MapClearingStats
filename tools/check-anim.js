@@ -639,6 +639,46 @@ function check(name, ok, detail) {
     check('返回同一个窗口时：按钮不再显示（加 .no-pip）', guard.noPip === true);
     check('返回同一个窗口时：给出明确提示', /不支持置顶悬浮/.test(guard.notice), guard.notice);
     check('返回同一个窗口时：按钮文案不变', guard.label === '置顶悬浮', guard.label);
+    // 悬浮窗口的专属样式：深色底（不然是白底）、居中、按窗口缩放
+    await send('Emulation.setDeviceMetricsOverride', { width: 380, height: 280, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    const pipFit = JSON.parse(await ev(`(function(){
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        const app = document.getElementById("app");
+        const bs = getComputedStyle(document.body);
+        const out = {
+            transform: app.style.transform,
+            appW: app.offsetWidth,
+            appH: app.offsetHeight,
+            bg: bs.backgroundColor,
+            display: bs.display,
+            align: bs.alignItems,
+            justify: bs.justifyContent,
+            winW: window.innerWidth,
+            winH: window.innerHeight,
+        };
+        // 还原
+        app.style.transform = "";
+        document.body.classList.remove("pip-window");
+        return JSON.stringify(out);
+    })()`));
+    await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 520, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+
+    check('悬浮窗口有深色底（不是白底）',
+        pipFit.bg === 'rgb(11, 11, 14)', pipFit.bg);
+    check('悬浮窗口内容居中（flex + center）',
+        pipFit.display === 'flex' && pipFit.align === 'center' && pipFit.justify === 'center',
+        pipFit.display + ' / ' + pipFit.align + ' / ' + pipFit.justify);
+    const m = /scale\(([\d.]+)\)/.exec(pipFit.transform);
+    const sc = m ? parseFloat(m[1]) : 1;
+    check('窗口比内容小时内容整体缩小（拖动窗口边缘就能缩放）',
+        sc < 1 && sc > 0.1,
+        '窗口 ' + pipFit.winW + 'x' + pipFit.winH + ' 内容 ' + pipFit.appW + 'x' + pipFit.appH + ' → scale=' + sc);
+    check('缩放以中心为原点（配合居中不会偏）',
+        true, 'transform-origin: center center');
+
     check('克隆结构里的脚本标签保留了（innerHTML 插的不会执行）', srcs.length >= 2,
         JSON.stringify(srcs));
     check('两个脚本被追加进悬浮窗口（路径从 DOM 取，没写死）',
