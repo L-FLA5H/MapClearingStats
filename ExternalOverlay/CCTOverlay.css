@@ -1197,4 +1197,8 @@ body.pip-window {
 body.pip-window #app {
     transform-origin: center center;
     flex: 0 0 auto;
+    /* ⚠️⚠️ 必须把 #app 自带的 margin: 8vh auto 0 清掉。
+       那个 8vh 是给 OBS 用的（覆盖层往下挪一点），
+       但在悬浮窗口里会把 flex 居中的内容整体顶偏，看起来就是「上下没居中」。 */
+    margin: 0;
 }

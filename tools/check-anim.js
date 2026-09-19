@@ -676,10 +676,14 @@ function check(name, ok, detail) {
         fitFloatContent();
         const app = document.getElementById("app");
         const bs = getComputedStyle(document.body);
+        const r = app.getBoundingClientRect();
         const out = {
             transform: app.style.transform,
             appW: app.offsetWidth,
             appH: app.offsetHeight,
+            topGap: Math.round(r.top),
+            bottomGap: Math.round(window.innerHeight - r.bottom),
+            margin: getComputedStyle(app).marginTop,
             bg: bs.backgroundColor,
             display: bs.display,
             align: bs.alignItems,
@@ -707,6 +711,37 @@ function check(name, ok, detail) {
         '窗口 ' + pipFit.winW + 'x' + pipFit.winH + ' 内容 ' + pipFit.appW + 'x' + pipFit.appH + ' → scale=' + sc);
     check('缩放以中心为原点（配合居中不会偏）',
         true, 'transform-origin: center center');
+    // ⚠️ #app 自带 margin: 8vh auto 0（给 OBS 用的），
+    //    悬浮窗口里必须清掉，否则 flex 居中的内容会被顶偏
+    check('悬浮窗口里清掉了 #app 的 8vh 上边距',
+        pipFit.margin === '0px', 'margin-top=' + pipFit.margin);
+
+    // ⚠️ 居中要用「窗口比内容大」的视口测 —— 窗口小的时候内容撑满，
+    //    上下留白都是 0，那条断言等于没测。
+    await send('Emulation.setDeviceMetricsOverride', { width: 700, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    const pipCenter = JSON.parse(await ev(`(function(){
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        const app = document.getElementById("app");
+        const r = app.getBoundingClientRect();
+        const out = {
+            topGap: Math.round(r.top),
+            bottomGap: Math.round(window.innerHeight - r.bottom),
+            winH: window.innerHeight,
+            appH: Math.round(r.height),
+        };
+        app.style.transform = "";
+        document.body.classList.remove("pip-window");
+        return JSON.stringify(out);
+    })()`));
+    await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 520, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+
+    check('悬浮窗口里内容上下居中',
+        pipCenter.appH < pipCenter.winH && Math.abs(pipCenter.topGap - pipCenter.bottomGap) <= 2,
+        '视口高 ' + pipCenter.winH + ' / 内容高 ' + pipCenter.appH +
+        ' → 上留白 ' + pipCenter.topGap + 'px / 下留白 ' + pipCenter.bottomGap + 'px');
 
     // ⚠️ 悬浮窗口里**不放复制出来的结构**，而是放一个 iframe 让它正常加载一遍。
     //    （复制结构的方案踩过两个坑：脚本追加时 DOMContentLoaded 早过去了，
