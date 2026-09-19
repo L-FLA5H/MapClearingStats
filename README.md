@@ -271,8 +271,7 @@
 
 | 位置在哪？                                                               | 它是啥？                         | 对你使用这个工具有用吗？ |
 | ------------------------------------------------------------------- | ---------------------------- | ------------ |
-| `Mods\...ConsistencyTracker\Assets\ExternalOverlay\`  
-             | CCT **自带的原始副本**，只在首次启动时被复制一次 | ❌ **有个蛋**    |
+| `Mods\...ConsistencyTracker\Assets\ExternalOverlay\` | CCT **自带的原始副本**，只在首次启动时被复制一次 | ❌ **有个蛋**    |
 | `<Celeste 安装目录>\ConsistencyTracker\external-tools\ExternalOverlay\` | CCT 运行时复制出来的**工作目录**         | ✅ **有的朋友有的** |
 
 **正确的目录长这样：**
