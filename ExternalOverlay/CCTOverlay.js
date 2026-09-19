@@ -686,35 +686,46 @@ if (document.readyState === "loading") {
 //
 //   pollScene → reconcileSession → resolveGoldenMode / renderUpper
 //            → locateRoom → settleTiming → renderLower
+// ⚠️ 重入守卫：tick 是 async，而 setInterval 不等上一轮跑完。CCT 卡住
+//    （不拒绝、也不返回）时，后续 tick 会每 500ms 叠一层，多个 tick 并发跑
+//    reconcile/render/save。守卫保证同一时刻最多一轮在跑。
+let ticking = false;
+
 async function tick() {
     if (pipSuspended) return;      // 悬浮模式下主窗口这份挂起（见 enterFloatMode）
-    // ① 看场景：现在人在关卡里吗
-    const scene = await pollScene();
-    if (!scene.inLevel) {
-        handleOutsideLevel(scene.sceneType);
-        return;
+    if (ticking) return;
+    ticking = true;
+    try {
+        // ① 看场景：现在人在关卡里吗
+        const scene = await pollScene();
+        if (!scene.inLevel) {
+            handleOutsideLevel(scene.sceneType);
+            return;
+        }
+
+        // ② 拉 CCT 数据 → 对齐会话（重开 / 换章 / 恢复历史 / 进度有没有保留）
+        const data = await readCct();
+        if (!data) return;
+        const ctx = reconcileSession(data.state, data.path);
+
+        // ③ 判定一命模式 + 上半渲染
+        const mode = resolveGoldenMode(data.state, data.stats, ctx.currentRoom);
+        renderUpper(data.state, data.stats, ctx.hasPath, ctx.currentRoom,
+                    mode.diedNow, mode.goldenChanged);
+
+        // ④ 定位当前房间（没有录制路径、或不在路径上时，内部会处理渲染并放弃后续步骤）
+        const place = locateRoom(data.path, ctx.currentRoom, ctx.hasPath);
+        if (!place) return;
+
+        // ⑤ 结算时间：补偿暂停 → 结算上一面 → 记下进本房时刻
+        settleTiming(ctx.currentRoom);
+
+        // ⑥ 下半渲染：房间信息卡 + 小节进度
+        renderLower(data.path, data.state, ctx.hasPath, ctx.currentRoom,
+                    place.cpIndex, place.roomIndex, place.cp);
+    } finally {
+        ticking = false;
     }
-
-    // ② 拉 CCT 数据 → 对齐会话（重开 / 换章 / 恢复历史 / 进度有没有保留）
-    const data = await readCct();
-    if (!data) return;
-    const ctx = reconcileSession(data.state, data.path);
-
-    // ③ 判定一命模式 + 上半渲染
-    const mode = resolveGoldenMode(data.state, data.stats, ctx.currentRoom);
-    renderUpper(data.state, data.stats, ctx.hasPath, ctx.currentRoom,
-                mode.diedNow, mode.goldenChanged);
-
-    // ④ 定位当前房间（没有录制路径、或不在路径上时，内部会处理渲染并放弃后续步骤）
-    const place = locateRoom(data.path, ctx.currentRoom, ctx.hasPath);
-    if (!place) return;
-
-    // ⑤ 结算时间：补偿暂停 → 结算上一面 → 记下进本房时刻
-    settleTiming(ctx.currentRoom);
-
-    // ⑥ 下半渲染：房间信息卡 + 小节进度
-    renderLower(data.path, data.state, ctx.hasPath, ctx.currentRoom,
-                place.cpIndex, place.roomIndex, place.cp);
 }
 
 // ① 从 LevelWatcher 读当前场景
@@ -773,26 +784,48 @@ async function pollScene() {
 }
 
 // ① 的出口之一：不在关卡内 → 存档、停表、显示状态卡
+// 不在关卡内时本函数每 tick（500ms）都会被调；原来每次都全量重写
+// localStorage（saveChapterHistory 还要 parse 整个 chapters 对象），
+// 挂机在标题界面几小时就是上万次无意义写入。会话内容没变就不写。
+// ⚠️ 比较发生在 pauseTimer 之前：第一轮存的 totalSec 与旧口径一致（未暂停）。
+let lastOutsideSaveSig = null;
+
 function handleOutsideLevel(sceneType) {
-    // 不在关卡内：保存当前章节数据到历史
-    if (session.chapterName) {
-        saveChapterHistory();
+    const sig = JSON.stringify(session);
+    if (sig !== lastOutsideSaveSig) {
+        lastOutsideSaveSig = sig;
+        // 不在关卡内：保存当前章节数据到历史
+        if (session.chapterName) {
+            saveChapterHistory();
+        }
+        saveSession();
     }
     pauseTimer();
     showStatusCard(getStatusText(sceneType));
-    saveSession();
 }
 
-// ② 拉 CCT 的三个接口；拿不到就放弃这一轮
+// ⚠️ 瞬时失败去抖：原来任何一次请求失败都立刻打「CCT 未响应」状态卡，
+//    网络抖一下直播画面就 500ms 一闪。现在连续 CCT_FAIL_STREAK_LIMIT 次
+//    失败才显示。停表（pauseTimer）不参与去抖——计时正确性优先，
+//    多停的时长会被恢复时的补偿机制抹掉。
+let cctFailStreak = 0;
+const CCT_FAIL_STREAK_LIMIT = 2;
+
+// ② 拉 CCT 的三个接口；拿不到就放弃这一轮。
+// ⚠️ 三个请求互不依赖，Promise.all 并行（原来是串行 await，延迟 3×RTT）。
 async function readCct() {
     let state, path, stats;
     try {
-        state = await fetchJson("/cct/state");
-        path  = await fetchJson("/cct/currentChapterPath");
-        stats = await fetchJson("/cct/currentChapterStats");
+        [state, path, stats] = await Promise.all([
+            fetchJson("/cct/state"),
+            fetchJson("/cct/currentChapterPath"),
+            fetchJson("/cct/currentChapterStats"),
+        ]);
+        cctFailStreak = 0;
     } catch (e) {
-        showStatusCard("CCT 未响应");
+        cctFailStreak++;
         pauseTimer();
+        if (cctFailStreak >= CCT_FAIL_STREAK_LIMIT) showStatusCard("CCT 未响应");
         return null;
     }
     return { state, path, stats };
@@ -935,8 +968,7 @@ function locateRoom(path, currentRoom, hasPath) {
     if (!inPath) {
         setNotice("");
         renderSectionsOutside();
-        resumeTimer();
-        session.isPaused = false;
+        resumeTimer();   // 内部已置 isPaused = false，不必再写一遍
         saveSession();
         return null;
     }
@@ -1268,7 +1300,7 @@ function saveChapterHistory() {
             savedAt: Date.now(),          // 存时间戳，load 时用来判断「隔了多久」
         };
         store.set(CHAPTERS_KEY, JSON.stringify(all));
-    } catch (e) {}
+    } catch (e) { dlog("⚠ 章节历史存档失败：" + e.message); }
 }
 
 function loadChapterHistory(chapterName) {
@@ -1370,7 +1402,6 @@ function renderHeader(state, stats, valid) {
     setLabel("blk1-label", "本面死亡");
     setIcon("blk2-icon", "⏱️");
     setLabel("blk2-label", "本面用时");
-    show("#avg-line", true);
 
     let total = 0;
     for (const v of Object.values(session.roomDeaths)) total += v;
@@ -1586,6 +1617,11 @@ function buildStreakAttempts(snap) {
     return base.concat(liveGolden.extra);
 }
 
+// ⚠️ 请求序号：busy 超时强制解锁后，旧请求若最终才返回，
+//    不能用旧数据覆盖新数据（也不能把新请求的 busy 错误地清掉）。
+//    响应回来时序号对不上就整个丢弃。
+let goldenStatsSeq = 0;
+
 async function requestGoldenStats(roomName, force) {
     const now = Date.now();
 
@@ -1608,12 +1644,17 @@ async function requestGoldenStats(roomName, force) {
     goldenStats.busyAt = now;
     goldenStats.at = now;
     goldenStats.room = roomName;
+    const seq = ++goldenStatsSeq;
     try {
         // 占位符表在 CctClient.GOLDEN_STATS_PLACEHOLDERS（单一来源，
         // 实测对照与「UTF-16 抓取」的教训都记在那边）。
         // 下标含义：0 成功率 / 1 通过数 / 2 进入次数 / 3 进入率 / 4 局数 /
         //           5 带金死亡（本章）/ 6 带金死亡（本次会话）
         const out = await parseFormats(CctClient.GOLDEN_STATS_PLACEHOLDERS);
+        if (seq !== goldenStatsSeq) {
+            dlog("ℹ 丢弃迟到的带金统计响应（seq=" + seq + "，当前 " + goldenStatsSeq + "）");
+            return;
+        }
         writeGoldenStats(out);
         // 走势条用这两个量做「实时增量」——见 liveGolden 那段注释
         // ⚠️ 只在 CCT 暂停死亡追踪时才需要（否则 previousAttempts 本身就是实时的，
@@ -1621,10 +1662,11 @@ async function requestGoldenStats(roomName, force) {
         noteGoldenProgress(out[2], out[1], lastTrackingPaused);
         goldenStats.ready = true;
     } catch (e) {
+        if (seq !== goldenStatsSeq) return;   // 迟到的失败同样不能动 ready
         goldenStats.ready = false;
         dlog("✗ 取带金统计失败：" + e.message);
     } finally {
-        goldenStats.busy = false;
+        if (seq === goldenStatsSeq) goldenStats.busy = false;
     }
 }
 
@@ -2101,6 +2143,13 @@ function renderStreak(state, valid, currentRoom, mode) {
                       + (attempts.length > STREAK_MAX_DOTS
                          ? "，这里显示最近 " + STREAK_MAX_DOTS + " 次" : "");
     }
+
+    // 底部「近 20 次通过率」标签同样跟随 STREAK_MAX_DOTS（HTML 里那份只是初始值）
+    const footTitleEl = document.getElementById("streak-foot-title");
+    if (footTitleEl) {
+        const ft = "近 " + STREAK_MAX_DOTS + " 次通过率";
+        if (footTitleEl.textContent !== ft) footTitleEl.textContent = ft;
+    }
 }
 
 function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
@@ -2561,7 +2610,7 @@ function setNotice(msg) {
 }
 
 function saveSession() {
-    try { store.set(STORAGE_KEY, JSON.stringify(session)); } catch (e) {}
+    try { store.set(STORAGE_KEY, JSON.stringify(session)); } catch (e) { dlog("⚠ 会话存档失败：" + e.message); }
 }
 function loadSession() {
     try {
@@ -2579,11 +2628,12 @@ function loadSession() {
 }
 
 async function fetchJson(endpoint) {
-    const res = await fetch(CCT_BASE + endpoint, { headers: { "Accept": "application/json" } });
+    // ⚠️ no-store：与 parseFormat 同理，防 CEF/OBS 缓存旧响应导致数据卡住
+    const res = await fetch(CCT_BASE + endpoint, { headers: { "Accept": "application/json" }, cache: "no-store" });
     return await res.json();
 }
 async function fetchJsonFrom(url) {
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    const res = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
     return await res.json();
 }
 
