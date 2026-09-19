@@ -1108,34 +1108,58 @@ function renderOutsideText(text) {
 function renderSectionsEmptyWithText(text) { renderOutsideText(text); }
 function renderSectionsOutside() { renderOutsideText("当前不在路径中"); }
 
+// ---- 死亡判定的纯函数核心 ----
+// 根据 CCT 报的「本房·本命死亡数」（curDeaths）算出本次新增死亡数。
+// 只做三种判定：种子基准 / 正常增量 / 归零重基准。零 DOM、零存档、零日志——
+// 死亡红光、saveSession 与日志都留在外壳 detectDeaths 里，
+// 所以 tools/check-deaths.js 能按函数边界提取本函数直接单测（手法同 check-goldenfsm.js）。
+//
+// ⚠️ lastCurDeaths 是调用方的状态袋（session.lastCurDeaths），本函数会**就地更新**
+//    「当前房间」那一项；除此之外不碰任何传入对象。
+// ⚠️ deathsInCurrentRun 的口径是「本房·本命」（CCT 开新命会清零），逐房存基准
+//    不会跨房串数；返回值 rebased=true 表示发生了归零重基准（外壳据此打日志）。
+function detectDeathsCore(lastCurDeaths, currentRoom, curDeaths, seedOnly) {
+    if (!lastCurDeaths) lastCurDeaths = {};
+    const prev = lastCurDeaths[currentRoom] || 0;
+
+    // 重开章节后的第一次检测：只记录基准，不计数（见 seedDeathsOnly 的注释）
+    if (seedOnly) {
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: 0, prev: prev, rebased: false, seedOnly: false };
+    }
+
+    if (curDeaths > prev) {
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: curDeaths - prev, prev: prev, rebased: false, seedOnly: false };
+    }
+    if (curDeaths < prev) {
+        // 这是正常现象：CCT 在新的一条命开始时会把「本命死亡数」清零，
+        // 所以玩家离开房间再回来时会看到它变小。已经累加过的死亡数不会丢。
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: 0, prev: prev, rebased: true, seedOnly: false };
+    }
+    return { delta: 0, prev: prev, rebased: false, seedOnly: false };
+}
+
 function detectDeaths(state, stats, currentRoom) {
     const curDeaths = CctClient.snapshot(state).deathsInCurrentRun;
     if (!session.lastCurDeaths) session.lastCurDeaths = {};
-    const prevCur = session.lastCurDeaths[currentRoom] || 0;
-    let delta = 0;
+    const wasSeed = seedDeathsOnly;
+    const r = detectDeathsCore(session.lastCurDeaths, currentRoom, curDeaths, seedDeathsOnly);
+    seedDeathsOnly = r.seedOnly;
 
-    // ⚠️ 重开章节后的第一次检测：只记录基准，不计数（见 seedDeathsOnly 的注释）
-    if (seedDeathsOnly) {
-        seedDeathsOnly = false;
-        session.lastCurDeaths[currentRoom] = curDeaths;
+    if (wasSeed) {
         dlog("⟲ 重开后首次检测：只记基准 deathsInCurrentRun=" + curDeaths + "，不计数");
         return 0;
     }
-
-    if (curDeaths > prevCur) {
-        delta += curDeaths - prevCur;
-        session.lastCurDeaths[currentRoom] = curDeaths;
-    } else if (curDeaths < prevCur) {
-        // 这是正常现象：CCT 在新的一条命开始时会把「本命死亡数」清零，
-        // 所以玩家离开房间再回来时会看到它变小。已经累加过的死亡数不会丢。
-        dlog("ℹ 死亡计数归零: 房间 " + currentRoom + " " + prevCur + " → " + curDeaths
+    if (r.rebased) {
+        dlog("ℹ 死亡计数归零: 房间 " + currentRoom + " " + r.prev + " → " + curDeaths
              + "（CCT 开了新的一条命，正常现象）");
-        session.lastCurDeaths[currentRoom] = curDeaths;
     }
 
-    if (delta > 0) {
-        session.roomDeaths[currentRoom] = (session.roomDeaths[currentRoom] || 0) + delta;
-        dlog("💀 死亡 +" + delta + " 房间 " + currentRoom
+    if (r.delta > 0) {
+        session.roomDeaths[currentRoom] = (session.roomDeaths[currentRoom] || 0) + r.delta;
+        dlog("💀 死亡 +" + r.delta + " 房间 " + currentRoom
              + " → 本房累计 " + session.roomDeaths[currentRoom]);
 
         // 死亡时顶部卡片红光一闪（靠 transition 淡入淡出，比 keyframes 更好控制）
@@ -1153,7 +1177,7 @@ function detectDeaths(state, stats, currentRoom) {
     // ⚠️ 这是「死亡事件」最可靠的信号，而且比 CCT 的 playerIsHoldingGolden 快得多：
     //    实测日志里死亡计数在 11:58:23.930 就变了，手持标志到 11:58:25.193 才翻 false。
     //    一命挑战要靠它做到「死了立刻回正常状态」。
-    return delta;
+    return r.delta;
 }
 
 function pauseTimer() {
