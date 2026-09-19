@@ -430,9 +430,88 @@ function readGoldenType(stats, state) {
     return gt.isSilver ? 2 : 0;
 }
 
+// ==== GoldenMode BEGIN（切片标记，勿改此行）====
+// 一命挑战的三个状态（normal / gold / silver），以及「每个状态下各处该怎么表现」。
+//
+// ⚠️ 为什么要这张表：原来用一个布尔 goldenModeOn 表示「是否在挑战中」，
+//    金/银另由另一个变量承载 —— 状态被拆成两处表达，而「这个模式下我该怎样」的
+//    知识又散在 8 个渲染函数里各自写 if。想加第四种模式，就得把这 8 处逐个找出来，
+//    漏掉任何一处，画面就会出现「半新半旧」的怪状态。现在统一改成查表。
+//
+// ⚠️⚠️ 下面两个字段是**从真实 bug 换来的约束**，它们的注释里的故事不能丢：
+//    hideRoomInfoRow     —— 一命模式下 .room-info-row 必须**无条件**隐藏。
+//                           曾在这里加过「没走势数据就把这行放出来」的兜底，
+//                           结果小闪反馈「带银时第二张卡片显示的是本面死亡和本面用时」——
+//                           兜底把正确的布局顶掉了。
+//    streakKeepWhenEmpty —— 一命模式下走势条即使没数据也要**保留整条**（同样画满 20 个空位）。
+//                           换成一行文字会让这一行宽度跳动，而且第二张卡片会空白。
+//    这两条都在 tools/check-goldenmode.js 里锁着，改成 false 测试会红。
+//
+// 表是**纯数据**（零 DOM、零外部引用），tools/check-goldenmode.js 按标记切片求值来单测。
+const GOLDEN_MODE = {
+    // ---- 初见推图（原来那些 if (!goldenModeOn) 的分支）----
+    normal: {
+        name: "normal",
+        challenge: false,            // 是否处于一命挑战
+        isSilver: false,             // 金/银（原来散落的 goldenTypeCache === 2）
+        usesGoldenStats: false,      // 要不要拉 CCT 的成功率/进入率/局数
+        usesStreak: false,           // 要不要走势条（初见用不到 previousAttempts）
+        streakKeepWhenEmpty: false,
+        hideRoomInfoRow: false,      // ⚠️ 见上方约束说明
+        writesLegacyTimers: true,    // 「总用时 / 本面用时」两格由 timerLoop 写
+        // 下面四个文案字段 normal 用不到，**故意留空**：
+        // 万一哪天有代码在初见模式下读到它们，会立刻显出一个空字符串，而不是
+        // 悄悄显示「带金」这种错文案。
+        badgeText: "",
+        label: "",
+        rateLabel: "",
+        deathWord: "",
+    },
+    // ---- 带金挑战 ----
+    gold: {
+        name: "gold",
+        challenge: true,
+        isSilver: false,
+        usesGoldenStats: true,
+        usesStreak: true,
+        streakKeepWhenEmpty: true,   // ⚠️ 别改成 false
+        hideRoomInfoRow: true,       // ⚠️ 别改成 false
+        writesLegacyTimers: false,   // 一命模式下那两块是隐藏的，写了也看不见
+        badgeText: "带金",
+        label: "带金",
+        rateLabel: "带金成功率",
+        deathWord: "带金死亡",
+    },
+    // ---- 带银挑战 ----
+    silver: {
+        name: "silver",
+        challenge: true,
+        isSilver: true,
+        usesGoldenStats: true,
+        usesStreak: true,
+        streakKeepWhenEmpty: true,   // ⚠️ 别改成 false
+        hideRoomInfoRow: true,       // ⚠️ 别改成 false
+        writesLegacyTimers: false,
+        badgeText: "带银",
+        label: "带银",
+        rateLabel: "带银成功率",
+        deathWord: "带银死亡",
+    },
+};
+
+// 按名字取模式；名字非法/为空一律退回 normal（不因为一个字符串就把整页搞挂）
+function goldenModeByName(name) {
+    return GOLDEN_MODE[name] || GOLDEN_MODE.normal;
+}
+// ==== GoldenMode END ====
+
 let goldenModeChapter = null;   // 当前判定的章节名
-let goldenModeOn = false;       // 此刻是否处于带金/带银状态
-let goldenTypeCache = 0;        // 本章的 goldenType（1 金 / 2 银）
+// 此刻处于哪个模式：normal / gold / silver
+// ⚠️ 存**名字**而不是对象引用：各处统一用 curGoldenMode() 取配置，
+//    避免出现「变量和表里某一行指向不同对象」这种失同步。
+// ⚠️ 唯一的写入点是 updateGoldenMode()，别在别处改它。
+let goldenModeName = "normal";
+function curGoldenMode() { return goldenModeByName(goldenModeName); }
 let goldenDropAt = 0;           // 最近一次「掉草莓」的时间戳（用于冷却窗口）
 // 冷却窗口：掉草莓后这段时间内重新拿起，视作同一次挑战。
 // ⚠️ 原来是 2500ms，小闪反馈「带金死了之后，卡片会过一段时间才回归正常」。
@@ -463,8 +542,7 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
     // 换章节 → 重置，重新等这一次的「拿起草莓」
     if (chapterName !== goldenModeChapter) {
         goldenModeChapter = chapterName;
-        goldenModeOn = false;
-        goldenTypeCache = 0;
+        goldenModeName = "normal";
         goldenDropAt = 0;
         goldenDiedAt = 0;
         goldenRunSec = 0;
@@ -474,11 +552,15 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
     const gt = goldenType || 0;
     const now = Date.now();
     let changed = false;
+    // gt 已被 readGoldenType 归一化成 0=金 / 2=银
+    const seenMode = (gt === 2) ? "silver" : "gold";
+    // ⚠️「在不在挑战中」一律问当前模式对象，不再直接读变量
+    const inChallenge = curGoldenMode().challenge;
 
     // 带金挑战期间死亡 → 记下时刻。这一局已经结束了。
     // ⚠️ 只在「本来就在带金状态」时记录 —— 初见练习时的死亡跟一命挑战无关，
     //    不该挡住之后拿起草莓进入带金状态。
-    if (diedNow && goldenModeOn) goldenDiedAt = now;
+    if (diedNow && inChallenge) goldenDiedAt = now;
 
     // 死亡后的一小段「锁定期」：CCT 的手持标志要 1 秒多才翻 false，
     // 这期间必须挡住重新进入，否则会「退出 → 又进去」闪一下。
@@ -486,9 +568,11 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
 
     if (holdingGolden && !diedRecently) {
         // ---- 拿着草莓 ----
-        if (!goldenModeOn) {
+        if (!inChallenge) {
             const isRePick = (goldenDropAt > 0) && (now - goldenDropAt < GOLDEN_DROP_GRACE_MS);
-            goldenModeOn = true;
+            // 刚拿起时 gt 常常还是 0（CCT 那边还没算出来）→ 先按金起手，
+            // 等下面「金/银后补」拿到 2 再换成银。与原来的行为一致。
+            goldenModeName = seenMode;
             changed = true;
             dlog(isRePick
                 ? "◆ 冷却窗口内重新拿起草莓 → 回到一命布局"
@@ -497,30 +581,32 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
         goldenDropAt = 0;   // 拿着就清掉冷却计时
     } else {
         // ---- 没拿草莓，或者刚死 ----
-        if (goldenModeOn) {
+        if (inChallenge) {
             if (diedRecently) {
                 // 死亡 → **立刻**退出，不等冷却窗口。
                 // 小闪：「带金死了之后，卡片会过一段时间才回归正常」——
                 // 一命挑战里死了这一局就结束了，没有任何理由再等 1 秒多。
-                goldenModeOn = false;
+                // ⚠️ 日志用当前模式的文案再改状态 —— 原来是写死的「带金」，
+                //    带银的时候打出来是错的。
+                dlog("◆ " + curGoldenMode().deathWord + " → 立刻退出挑战状态，回到初见布局");
+                goldenModeName = "normal";
                 goldenDropAt = now;
                 changed = true;
-                dlog("◆ 带金死亡 → 立刻退出带金状态，回到初见布局");
             } else if (goldenDropAt === 0) {
                 goldenDropAt = now;
                 dlog("◆ 草莓掉落 → 进入 " + (GOLDEN_DROP_GRACE_MS / 1000) + " 秒冷却窗口");
             } else if (now - goldenDropAt >= GOLDEN_DROP_GRACE_MS) {
                 // 非死亡的意外掉草莓：等冷却窗口过完再退出
-                goldenModeOn = false;
+                dlog("◆ 冷却窗口结束仍未拿起 → 退出" + curGoldenMode().label + "状态，回到初见布局");
+                goldenModeName = "normal";
                 changed = true;
-                dlog("◆ 冷却窗口结束仍未拿起 → 退出带金状态，回到初见布局");
             }
         }
     }
 
-    // 金/银类型后补：拿到非 0 的 goldenType 后修正配色
-    if (goldenModeOn && gt !== 0 && gt !== goldenTypeCache) {
-        goldenTypeCache = gt;
+    // 金/银类型后补：拿到非 0 的 goldenType 后修正模式（配色和文案都跟着换）
+    if (goldenModeName !== "normal" && gt !== 0 && goldenModeName !== seenMode) {
+        goldenModeName = seenMode;
         changed = true;
         dlog("◆ 金/银已确定 → goldenType=" + gt + "（" + (gt === 2 ? "银" : "金") + "）");
     }
@@ -789,8 +875,10 @@ function resolveGoldenMode(state, stats, currentRoom) {
         state.chapterName || "", goldenType, snap.holdingGolden, diedNow);
 
     // 「本次一命挑战累计用时」：只在真正带金挑战期间累积
+    // ⚠️ 模式刚在 updateGoldenMode 里更新过，这里取到的已是本 tick 的最新值
+    const mode = curGoldenMode();
     const now = Date.now();
-    if (goldenModeOn && !session.isPaused) {
+    if (mode.challenge && !session.isPaused) {
         if (goldenRunTickAt > 0) {
             const dt = (now - goldenRunTickAt) / 1000;
             // 卡顿超过 3 秒（切场景、最小化）不计入，防止一次性灌进来一大段时间
@@ -806,7 +894,9 @@ function resolveGoldenMode(state, stats, currentRoom) {
 
 // ③ 上半渲染：换主题 → 显示数据卡 → 头部与走势条
 function renderUpper(state, stats, hasPath, currentRoom, diedNow, goldenChanged) {
-    applyGoldenTheme(goldenModeOn, goldenTypeCache);
+    // 本 tick 的模式（updateGoldenMode 已更新过）—— 下面几处一律问它要答案
+    const mode = curGoldenMode();
+    applyGoldenTheme(mode);
 
     showDataCards();
 
@@ -824,8 +914,8 @@ function renderUpper(state, stats, hasPath, currentRoom, diedNow, goldenChanged)
         animateLayoutSwap(function () {
             renderHeader(state, stats, hasPath);
             // 模式刚翻转 → 强制立刻刷新一次（不等 1.5 秒节流）
-            if (goldenModeOn) requestGoldenStats(currentRoom, true);
-            renderStreak(state, hasPath, currentRoom, goldenModeOn);
+            if (mode.usesGoldenStats) requestGoldenStats(currentRoom, true);
+            renderStreak(state, hasPath, currentRoom, mode);
             renderRoomInfo(state, hasPath, currentRoom, 0, null);
         });
     } else {
@@ -834,9 +924,9 @@ function renderUpper(state, stats, hasPath, currentRoom, diedNow, goldenChanged)
         // ⚠️ 刚死了也要强制刷一次 —— 死亡会让 CCT 那边立刻改数
         //    （带金死亡数 +1、尝试记录 +1），等 1.5 秒节流会让数字看起来「卡住」。
         //    小闪反馈过「带金死了之后成功率也没变」，就是刷新不够及时。
-        if (goldenModeOn) requestGoldenStats(currentRoom, diedNow);
-        // 走势条：只在带金/带银模式下显示（初见推图用不到 previousAttempts）
-        renderStreak(state, hasPath, currentRoom, goldenModeOn);
+        if (mode.usesGoldenStats) requestGoldenStats(currentRoom, diedNow);
+        // 走势条：只有「用走势条」的模式才画（见 GOLDEN_MODE 的 usesStreak）
+        renderStreak(state, hasPath, currentRoom, mode);
     }
 }
 
@@ -1198,20 +1288,22 @@ function loadChapterHistory(chapterName) {
 }
 
 function timerLoop() {
+    const mode = curGoldenMode();
     updateTransition();
     updateRateTween();      // 成功率的数值补间
 
     if (session.chapterName && !session.isPaused) {
         // ⚠️ 一命模式下「总死亡 / 总用时」整块是隐藏的（见 renderHeaderGolden），
         // 所以不要再去写那两格 —— 写了也看不见，还会跟新模式抢 DOM。
-        if (!goldenModeOn) {
+        // 该不该写由 GOLDEN_MODE 的 writesLegacyTimers 字段决定。
+        if (mode.writesLegacyTimers) {
             const totalSec = (Date.now() - session.startTime) / 1000;
             const el = document.getElementById("total-time");
             if (el) el.textContent = formatHMS(totalSec);
         }
 
         // 第二张卡片的右格：一命模式下整行都隐藏了，不用管
-        if (!transition && !goldenModeOn && session.lastRoom && session.currentRoomEnterTime) {
+        if (!transition && mode.writesLegacyTimers && session.lastRoom && session.currentRoomEnterTime) {
             const currentStay = Timing.currentRoomStaySec(session, Timing.nowMs(session));
             const accumulated = session.roomTimes[session.lastRoom] || 0;
             const el2 = document.getElementById("room-time");
@@ -1245,8 +1337,10 @@ function renderHeader(state, stats, valid) {
     }
 
     // ===== 一命挑战模式：换一套数据 =====
-    if (goldenModeOn) {
-        renderHeaderGolden(state, stats, valid);
+    // 走哪套由模式对象决定 —— 这里是**唯一**的模式分派点，别在别处再判一次
+    const mode = curGoldenMode();
+    if (mode.challenge) {
+        renderHeaderGolden(state, stats, valid, mode);
         return;
     }
 
@@ -1301,7 +1395,7 @@ function renderHeader(state, stats, valid) {
 //
 // ⚠️ 小闪明确说过：不要「本面进入」那种自己数出来的东西 ——
 // CCT 本来就有进入率。所以之前那个 roomEnterCounts 自算方案已废弃。
-function renderHeaderGolden(state, stats, valid) {
+function renderHeaderGolden(state, stats, valid, mode) {
     // 隐藏初见那三行
     show(".total-line", false);        // 会隐藏两条（总死亡、总用时）
     show("#avg-line", false);
@@ -1309,9 +1403,8 @@ function renderHeaderGolden(state, stats, valid) {
     show("#golden-line", true);
     show("#golden-subline", true);
 
-    const isSilver = (goldenTypeCache === 2);
-    const deathWord = isSilver ? "带银死亡" : "带金死亡";
-    setLabel("golden-label", isSilver ? "带银成功率" : "带金成功率");
+    // 文案一律从模式表取 —— 「带金 / 带银」只写在 GOLDEN_MODE 那一处
+    setLabel("golden-label", mode.rateLabel);
 
     // 值由 requestGoldenStats() 异步写入，这里只负责把布局切对。
     // 拿不到数据时显示占位符，避免上一张图的旧数字残留。
@@ -1319,7 +1412,7 @@ function renderHeaderGolden(state, stats, valid) {
         setText("golden-rate", "-");
         setText("golden-detail", "");
         setText("golden-runs", "进入率 -");
-        setText("golden-enter", deathWord + " -");
+        setText("golden-enter", mode.deathWord + " -");
     }
 }
 
@@ -1525,8 +1618,8 @@ async function requestGoldenStats(roomName, force) {
 }
 
 function writeGoldenStats(out) {
-    const isSilver = (goldenTypeCache === 2);
-    const deathWord = isSilver ? "带银死亡" : "带金死亡";
+    // 文案从模式表取 —— 「带金死亡 / 带银死亡」只写在 GOLDEN_MODE 那一处
+    const deathWord = curGoldenMode().deathWord;
 
     const rate   = (out[0] || "").trim();   // 带金成功率
     const ok     = (out[1] || "").trim();   // 带金通过数
@@ -1659,7 +1752,7 @@ function sweepFly(direction) {
     //    「带银死亡时不是镀的银淡出，而是突然镀成金的，然后淡出」。
     //    所以 fly-out 期间给卡片挂 .silver-layer 把银色锁住（见 CSS），
     //    动画结束再摘掉。
-    const lockSilver = (direction === "out") && (goldenTypeCache === 2);
+    const lockSilver = (direction === "out") && curGoldenMode().isSilver;
 
     cards.forEach(function (card) {
         card.classList.remove("fly-in", "fly-out");
@@ -1757,10 +1850,10 @@ function animateLayoutSwap(mutate) {
     }, SWAP_FADE_MS);
 }
 
-function applyGoldenTheme(on, goldenType) {    const app = document.getElementById("app");
+function applyGoldenTheme(mode) {
+    const app = document.getElementById("app");
     const badge = document.getElementById("golden-badge");
     const badgeText = document.getElementById("badge-text");
-    const isSilver = (goldenType === 2);
 
     // 模式是否真的发生了变化 —— 只有变化才播动画，
     // 否则 500ms 轮询里每帧都会重播（会看到徽章一直在闪）。
@@ -1768,19 +1861,20 @@ function applyGoldenTheme(on, goldenType) {    const app = document.getElementBy
     const wasSilver = app ? app.classList.contains("silver-mode") : false;
 
     if (app) {
-        app.classList.toggle("golden-mode", on);
-        // goldenType: 1 = 金，2 = 银
-        app.classList.toggle("silver-mode", on && isSilver);
+        // 两个类都由模式表决定：silver-mode 只在银模式下挂
+        app.classList.toggle("golden-mode", mode.challenge);
+        app.classList.toggle("silver-mode", mode.isSilver);
     }
-    if (badge) badge.classList.toggle("visible", !!on);
-    if (badgeText && on) {
-        const text = isSilver ? "带银" : "带金";
+    if (badge) badge.classList.toggle("visible", mode.challenge);
+    if (badgeText && mode.challenge) {
+        // 徽章文案从模式表取（「带金 / 带银」只写一处）
+        const text = mode.badgeText;
         if (badgeText.textContent !== text) badgeText.textContent = text;
     }
 
     // ---- 切换动画 ----
-    const turnedOn = on && !wasOn;                  // 初见 → 带金/带银
-    const typeSwapped = on && wasOn && (isSilver !== wasSilver); // 金银互换
+    const turnedOn = mode.challenge && !wasOn;                  // 初见 → 带金/带银
+    const typeSwapped = mode.challenge && wasOn && (mode.isSilver !== wasSilver); // 金银互换
     if (turnedOn || typeSwapped) {
         if (badge) {
             badge.classList.remove("pop");
@@ -1799,9 +1893,9 @@ function applyGoldenTheme(on, goldenType) {    const app = document.getElementBy
         // ⚠️ 只在「真的从无到有」时扫（turnedOn）；金银互换不重扫 ——
         //    金色本来就在那儿，再扫一遍会显得莫名其妙。
         if (turnedOn) sweepFly("in");
-        dlog("◆ 播放「" + (isSilver ? "带银" : "带金") + "」扫光" +
+        dlog("◆ 播放「" + mode.label + "」扫光" +
              (typeSwapped ? "（金银互换，只换色不重扫）" : ""));
-    } else if (wasOn && !on) {
+    } else if (wasOn && !mode.challenge) {
         // ---- 退出挑战模式（带金/带银 → 回到初见）----
         // 小闪要「死了之后扫到右边去」：金色往右滑走 + 渐隐，从右边缘离开。
         // ⚠️ 必须是独立的 flyOutToRight 动画，不能靠上面那段的原路退回 ——
@@ -1813,19 +1907,18 @@ function applyGoldenTheme(on, goldenType) {    const app = document.getElementBy
 
 // ===== 近期表现走势条 =====
 // 数据来自 CCT 的 previousAttempts：一个布尔数组，记录该房间最近每次尝试是否成功。
-// 我们从**右往左**取（最近的在右边），最多渲染 MAX 个，超出的用省略号表示。
+// 从**右往左**取（最近的在右边），最多渲染 STREAK_MAX_DOTS 个，多余的丢掉。
 //
-// ⚠️ 走势条只在「带金 / 带银」模式下显示。
+// ⚠️ 走势条只在「带金 / 带银」模式下显示 —— 由 GOLDEN_MODE 的 **usesStreak** 字段决定。
 // previousAttempts 记录的是**带金挑战**的每次尝试，初见推图根本用不到它
 // （初见时的通过与否由「方格是否被攻克」表达，不需要再看这个）。
-// 是否显示由 updateGoldenMode() 判定的「一命挑战模式」决定，
-// 见该函数上方的注释（goldenType 单独用不可靠）。
 // 小闪：「对应位置保证只留 20 个方块」。
 // ⚠️ 这个数字要和 HTML 里标题的「本面近 20 次通过情况」保持一致 ——
 //    标题现在是 renderStreak 里动态写的（见下面），所以改这里就够了。
 const STREAK_MAX_DOTS = 20;
 
-function renderStreak(state, valid, currentRoom, isGoldenMode) {
+// mode = GOLDEN_MODE 里的一条（normal / gold / silver）
+function renderStreak(state, valid, currentRoom, mode) {
     const strip = document.getElementById("streak-strip");
     const dotsEl = document.getElementById("streak-dots");
     const bestEl = document.getElementById("streak-best");
@@ -1833,8 +1926,9 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
     const rateEl = document.getElementById("streak-rate");
     if (!strip || !dotsEl) return;
 
-    // 不在关卡内 / CCT 没数据 / 换了房间 / 不是一命挑战模式 → 隐藏并重置状态
-    const snap = (valid && isGoldenMode) ? CctClient.snapshot(state) : null;
+    // 不在关卡内 / CCT 没数据 / 换了房间 / 这个模式不用走势条 → 隐藏并重置状态
+    // 「用不用」问模式表，这里不判模式本身
+    const snap = (valid && mode.usesStreak) ? CctClient.snapshot(state) : null;
     // ⚠️ 不能直接用 snap.previousAttempts —— 它只在换房间时才刷新（见 liveGolden 注释）。
     //    这里用「历史基准 + 本次观测到的实时增量」拼出完整序列。
     const attempts = snap ? buildStreakAttempts(snap) : null;
@@ -1848,7 +1942,10 @@ function renderStreak(state, valid, currentRoom, isGoldenMode) {
         // ⚠️ 而且必须**同样画满 20 个空位**，不能换成一行文字 ——
         //    小闪要求「对应位置保证只留 20 个方块」，
         //    换成文字会让这一行的宽度和位置跳动（有数据/没数据两种布局）。
-        const keepVisible = (valid && isGoldenMode);
+        // ⚠️⚠️ 这个模式**即使没数据也要保留整条**（同样画满 20 个空位）——
+        //    由 GOLDEN_MODE 的 streakKeepWhenEmpty 字段决定，**别改成 false**：
+        //    换成一行文字会让这一行的宽度和位置跳动，第二张卡片还会整个空白。
+        const keepVisible = (valid && mode.streakKeepWhenEmpty);
         strip.classList.toggle("visible", keepVisible);
         strip.classList.remove("hot");
         // ⚠️ 这里也走「复用节点」—— 从有数据切到没数据时，
@@ -2019,31 +2116,34 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
     //   只有换房间时 roomChanged 变 true 才刷一次。
     //   注意「本面用时」不受影响 —— 它是 timerLoop 每帧直接写 DOM 的，
     //   不走这个函数，所以只有死亡数会卡住。
+    const mode = curGoldenMode();
     const roomChanged = (currentRoom !== lastRoomInfoRoom);
-    const modeChanged = (goldenModeOn !== lastRoomInfoGolden);
+    // 只比「在不在挑战中」这一个布尔位（lastRoomInfoGolden 存的也是它）：
+    // 金 ↔ 银 互换不改变这里的布局，不需要额外重绘
+    const modeChanged = (mode.challenge !== lastRoomInfoGolden);
     const deathsChanged = ((session.roomDeaths[currentRoom] || 0) !== lastShownRoomDeaths);
     // ⚠️ forceRoomInfoRefresh 是「重开章节」那种情况的逃生口 ——
     //    那时新旧值都是 0，靠上面的判据永远发现不了「DOM 还是旧的」。
     if (!forceRoomInfoRefresh && !roomChanged && !modeChanged && !deathsChanged) return;
     forceRoomInfoRefresh = false;
     lastRoomInfoRoom = currentRoom;
-    lastRoomInfoGolden = goldenModeOn;
+    lastRoomInfoGolden = mode.challenge;
 
     // ===== 一命挑战模式：整行数据都藏掉，只留走势条 =====
     // 小闪的要求：本面死亡 / 本面用时 都不显示，
     // 成功率统一放在第一张卡片的「带金成功率」行里。
-    // 所以这里把 .room-info-row 整行隐藏，第二张卡片只剩走势条 —— 高度也降下来了。
+    // 所以一命模式下把 .room-info-row 整行隐藏，第二张卡片只剩走势条 —— 高度也降下来了。
     //
-    // ⚠️⚠️ 这里**必须无条件隐藏**，不要加「没走势数据就把这行放出来」的兜底。
-    //    我上一版加过那个兜底，结果小闪反馈「带银时第二张卡片还是显示的本面死亡
-    //    和本面用时，不是近期情况」—— 兜底把正确的布局顶掉了。
-    //    第二张卡片空白的真正解法在 renderStreak 里：
-    //    没数据时**保留走势条**、显示占位文字（见那边注释）。
-    if (goldenModeOn) {
-        show(".room-info-row", false);
+    // ⚠️⚠️ 隐藏与否由 GOLDEN_MODE 的 **hideRoomInfoRow** 字段决定，这里不再判模式。
+    //    该字段在一命模式下为 true，且必须**无条件**生效 ——
+    //    不要加「没走势数据就把这行放出来」的兜底：上一版加过那个兜底，
+    //    结果小闪反馈「带银时第二张卡片还是显示的本面死亡和本面用时，不是近期情况」，
+    //    兜底把正确的布局顶掉了。第二张卡片空白的真正解法在 renderStreak 里
+    //    （没数据时保留走势条、画满 20 个空位，见那边注释与 streakKeepWhenEmpty 字段）。
+    show(".room-info-row", !mode.hideRoomInfoRow);
+    if (mode.hideRoomInfoRow) {
         displayedRoomTimeSec = 0;
     } else {
-        show(".room-info-row", true);
         setLabel("blk1-label", "本面死亡");
         setIcon("blk1-icon", "💀");
         setLabel("blk2-label", "本面用时");

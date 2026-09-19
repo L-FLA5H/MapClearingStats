@@ -289,9 +289,10 @@ function check(name, ok, detail) {
         const out = {};
         [[], [true], [true,false,true], new Array(19).fill(true),
          new Array(20).fill(true), new Array(37).fill(false)].forEach(function (pa) {
+            // 第 4 参是 GOLDEN_MODE 里的一条（三态：normal / gold / silver）
             renderStreak({ currentRoom: { debugRoomName: "t", previousAttempts: pa,
                                           successStreak: 0, successStreakBest: 0 } },
-                         true, "t", true);
+                         true, "t", GOLDEN_MODE.gold);
             out[pa.length] = count();
         });
         out.title = title ? title.textContent : "";
@@ -329,11 +330,11 @@ function check(name, ok, detail) {
         // ① 方块节点要**复用**，不能每次重建（否则没有退出动画）
         const pa1 = new Array(20).fill(false);
         renderStreak({ currentRoom: { debugRoomName: "r1", previousAttempts: pa1,
-                                      successStreak: 0, successStreakBest: 0 } }, true, "r1", true);
+                                      successStreak: 0, successStreakBest: 0 } }, true, "r1", GOLDEN_MODE.gold);
         const firstNode = document.getElementById("streak-dots").children[0];
         const pa2 = pa1.slice(); pa2[19] = true;
         renderStreak({ currentRoom: { debugRoomName: "r1", previousAttempts: pa2,
-                                      successStreak: 0, successStreakBest: 0 } }, true, "r1", true);
+                                      successStreak: 0, successStreakBest: 0 } }, true, "r1", GOLDEN_MODE.gold);
         const sameNode = document.getElementById("streak-dots").children[0];
         out.nodeReused = (firstNode === sameNode);
         out.lastIsOk = document.getElementById("streak-dots").children[19].className.indexOf("ok") >= 0;
@@ -505,6 +506,38 @@ function check(name, ok, detail) {
         cardLayer.flyOut.gold && !cardLayer.flyOut.green,
         'anim=' + cardLayer.flyOut.anim);
 
+    // ============ ⑨ 一命模式三态表（GOLDEN_MODE）============
+    // 「带金 / 带银」的文案以前散在 5 处各写一遍，现在只在 GOLDEN_MODE 里写一次。
+    // 这里把两种模式的头部行真渲染一遍，防「带金 / 带银」写反或漏改。
+    //
+    // ⚠️ 编号是 ⑨ 不是 ⑧ —— ⑧ 被同期的「小节淡出」那组占了。⑩ 是上游随后
+    //    加的（「第三张卡片没变金」），同样落在本文件末尾，与本段相邻。
+    //    三方同时往这个位置加段，合并时注意两段都要留。
+    console.log('');
+    console.log('== ⑨ 一命模式三态表 ==');
+    const words = JSON.parse(await ev(`(function(){
+        const state = { currentRoom: { debugRoomName: "t", previousAttempts: [true],
+                                       successStreak: 1, successStreakBest: 1 } };
+        // 强制走占位符分支，让文案可预期（不依赖 CCT 那边有没有数据）
+        goldenStats.ready = false;
+        const out = { modes: Object.keys(GOLDEN_MODE).join(",") };
+        [["gold", GOLDEN_MODE.gold], ["silver", GOLDEN_MODE.silver]].forEach(function (p) {
+            renderHeaderGolden(state, null, true, p[1]);
+            out[p[0]] = {
+                label: document.getElementById("golden-label").textContent,
+                enter: document.getElementById("golden-enter").textContent,
+            };
+        });
+        return JSON.stringify(out);
+    })()`));
+    check('模式表恰好三态（normal / gold / silver）',
+        words.modes === 'normal,gold,silver', words.modes);
+    check('金模式头部文案是「带金成功率 / 带金死亡」',
+        words.gold.label === '带金成功率' && words.gold.enter.indexOf('带金死亡') === 0,
+        words.gold.label + ' ｜ ' + words.gold.enter);
+    check('银模式头部文案是「带银成功率 / 带银死亡」（别写反）',
+        words.silver.label === '带银成功率' && words.silver.enter.indexOf('带银死亡') === 0,
+        words.silver.label + ' ｜ ' + words.silver.enter);
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);
