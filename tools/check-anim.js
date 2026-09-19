@@ -639,6 +639,40 @@ function check(name, ok, detail) {
     check('返回同一个窗口时：按钮不再显示（加 .no-pip）', guard.noPip === true);
     check('返回同一个窗口时：给出明确提示', /不支持置顶悬浮/.test(guard.notice), guard.notice);
     check('返回同一个窗口时：按钮文案不变', guard.label === '置顶悬浮', guard.label);
+    // ⚠️⚠️ 关键回归：悬浮窗口里的脚本是「页面加载完之后」才追加的，
+    //    那时 DOMContentLoaded 早就过去了 —— 如果只监听它，整个启动流程不会跑。
+    //    表现：悬浮窗口里三张卡片是静态 HTML（看着有），但渲染循环、按钮全没反应。
+    //
+    //    这里把**真实的触发逻辑**从源码里抽出来，注入一个「已就绪」的 iframe 验证。
+    //    （iframe 代理跑不了克隆出来的脚本，但这段逻辑可以单独验。）
+    const overlaySrc = fs.readFileSync(
+        path.join(OUT, '..', '..', 'ExternalOverlay', 'CCTOverlay.js'), 'utf8');
+    // ⚠️ 要连 else 一起取 —— 只截 if 块的话，在「已加载完」的文档里 if 为假，什么都不会发生
+    const srcLines = overlaySrc.split(/\r?\n/);
+    const trigAt = srcLines.findIndex(l => /^if \(document\.readyState === "loading"\)/.test(l));
+    const triggerSrc = (trigAt >= 0) ? srcLines.slice(trigAt, trigAt + 5).join('\n') : '';
+    check('CCTOverlay.js 里有「已加载完也要启动」的判断',
+        trigAt >= 0 && /else/.test(triggerSrc),
+        trigAt >= 0 ? '找到了' : '没找到 —— 悬浮窗口会启动不了');
+
+    const bootProbe = JSON.parse(await ev(
+        '(async function(){\n' +
+        '  const fr = document.createElement("iframe");\n' +
+        '  fr.style.cssText = "position:fixed;left:-9999px;width:200px;height:200px;";\n' +
+        '  document.body.appendChild(fr);\n' +
+        '  await new Promise(function(r){ setTimeout(r, 400); });\n' +
+        '  const fw = fr.contentWindow;\n' +
+        '  const readyState = fw.document.readyState;\n' +
+        '  fw.eval("window.__booted = false; function bootOverlay(){ window.__booted = true; }");\n' +
+        '  fw.eval(' + JSON.stringify(triggerSrc) + ');\n' +
+        '  const out = { readyState: readyState, booted: fw.__booted === true };\n' +
+        '  fr.remove();\n' +
+        '  return JSON.stringify(out);\n' +
+        '})()'));
+    check('页面已加载完时也会启动（悬浮窗口就靠这条）',
+        bootProbe.booted === true,
+        'iframe readyState=' + bootProbe.readyState + ' booted=' + bootProbe.booted);
+
     // 悬浮窗口的专属样式：深色底（不然是白底）、居中、按窗口缩放
     await send('Emulation.setDeviceMetricsOverride', { width: 380, height: 280, deviceScaleFactor: 1, mobile: false });
     await sleep(200);

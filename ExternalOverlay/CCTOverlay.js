@@ -547,7 +547,15 @@ function bootIn() {
     setTimeout(() => app.classList.remove("boot"), 1200);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// ===== 启动 =====
+//
+// ⚠️⚠️ 不能只监听 DOMContentLoaded。
+//   悬浮窗口（Document PiP）里的脚本是「页面已经加载完之后」才追加进去的，
+//   那时 DOMContentLoaded 早就过去了 —— 监听器永远不会触发，
+//   整个启动流程不跑。表现就是：悬浮窗口里三张卡片是空的、按钮也没反应，
+//   因为渲染循环、事件绑定全都没执行。
+//   （看起来「有内容」只是因为 HTML 结构被复制过去了，那是静态的。）
+function bootOverlay() {
     renderDebugPanel();
     // 调试面板占住右侧，把覆盖层往左推，避免互相遮挡
     const app = document.getElementById("app");
@@ -587,7 +595,13 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(tick, TICK_MS);
     requestAnimationFrame(timerLoop);
     tick();
-});
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootOverlay);
+} else {
+    bootOverlay();
+}
 
 // ===== tick 主循环：按顺序走完下面六步 =====
 //
