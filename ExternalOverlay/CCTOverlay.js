@@ -580,8 +580,10 @@ document.addEventListener('DOMContentLoaded', () => {
          + " · 房间死亡记录=" + nDeaths + " 个"
          + (nDeaths ? " " + JSON.stringify(session.roomDeaths) : ""));
 
-    wireFloatButton();
     bootIn();
+    // ⚠️ 放在 bootIn 之后，并且包 try/catch ——
+    //    悬浮按钮只是锦上添花，绝不能因为它把覆盖层的启动流程打断。
+    try { wireFloatButton(); } catch (e) { dlog("✗ 悬浮按钮初始化失败：" + e.message); }
     setInterval(tick, TICK_MS);
     requestAnimationFrame(timerLoop);
     tick();
@@ -2604,7 +2606,8 @@ function copyStylesTo(targetDoc) {
             if (sheet.href) {
                 const link = targetDoc.createElement("link");
                 link.rel = "stylesheet";
-                link.href = sheet.href;
+                // ⚠️ 用绝对 URL —— 悬浮窗口文档的 base URL 解析不了相对路径
+                link.href = new URL(sheet.href, document.baseURI).href;
                 targetDoc.head.appendChild(link);
             }
             continue;
@@ -2627,6 +2630,9 @@ async function enterFloatMode() {
     }
     pipWindow = pip;
 
+    // ⚠️⚠️ 从这一步开始全部包在 try 里：一旦失败要**立刻把悬浮窗口关掉**，
+    //    否则会留一个空白窗口（标题是 about:blank），用户会以为程序卡住了。
+    try {
     copyStylesTo(pip.document);
 
     // 只复制结构。innerHTML 插进去的 <script> 不会执行，所以脚本要单独加。
@@ -2640,14 +2646,24 @@ async function enterFloatMode() {
     // 再把脚本重新加载一遍。
     // ⚠️ 路径要从当前页面已有的 <script src> 里取，别写死文件名 ——
     //    部署时是 "Timing.js"，但自检夹具里是 "../../ExternalOverlay/Timing.js"。
+    // ⚠️ 用绝对 URL —— 悬浮窗口文档的 base URL 解析不了相对路径
     const srcs = Array.from(document.querySelectorAll("script[src]"))
-        .map(function (el) { return el.getAttribute("src"); })
+        .map(function (el) { return new URL(el.getAttribute("src"), document.baseURI).href; })
         .filter(Boolean);
     srcs.forEach(function (src) {
         const el = pip.document.createElement("script");
         el.src = src;
         pip.document.body.appendChild(el);
     });
+
+    } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        try { pip.close(); } catch (e2) { /* 关不掉就算了 */ }
+        pipWindow = null;
+        setNotice("悬浮窗口里放不下覆盖层：" + msg);
+        dlog("✗ 悬浮模式失败：" + msg);
+        return;
+    }
 
     // 主窗口挂起：停掉轮询，避免两个实例同时写 localStorage
     pipSuspended = true;

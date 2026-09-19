@@ -141,11 +141,30 @@ flowchart LR
 
 ### 第 1 步：安装 LevelWatcher
 
-下载 [Release](https://github.com/L-FLA5H/MapClearingStats/releases/latest) 里的 `LevelWatcher.zip`，解压到蔚蓝的 Mods 目录：
+下载 [Release](https://github.com/L-FLA5H/MapClearingStats/releases/latest) 里的 `LevelWatcher.zip`。
+
+#### ⚠️ 关于「这个 Mod 要解压」
+
+蔚蓝的 Mod 通常**直接把 zip 丢进 `Mods` 文件夹就行，不用解压** ——
+所以看到这一步会有点奇怪，这里说清楚：
+
+- **本工具其实也支持直接丢 zip**（和 CCT 一样，Everest 会自己处理）
+- 但我们**推荐解压**，原因有两个：
+  1. 出问题时能**直接看到文件**，一眼确认版本对不对、有没有装重复
+  2. 不用去翻 Everest 的缓存目录（zip 加载的 Mod 会被解压到 `Mods\Cache\`）
+
+**解压后的目录长这样**（注意 `everest.yaml` 要**直接**在文件夹里，别再套一层）：
 
 ```
 <Celeste 安装目录>\Mods\LevelWatcher\
+├── everest.yaml
+└── bin\
+    ├── LevelWatcher.dll
+    └── LevelWatcher.pdb
 ```
+
+> 常见的装错方式：解压出来变成 `Mods\LevelWatcher\LevelWatcher\everest.yaml`
+> —— 多套了一层，Everest 找不到。**`everest.yaml` 必须和 `bin` 文件夹同级。**
 
 启动游戏，在 Everest 的 Mod 列表里确认 `LevelWatcher` 已经加载。日志里会出现：
 
