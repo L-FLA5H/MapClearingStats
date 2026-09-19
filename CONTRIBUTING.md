@@ -4,7 +4,7 @@
 
 ---
 
-## 提 PR 之前：把这四套自检跑一遍
+## 提 PR 之前：把这六套自检跑一遍
 
 改动覆盖层之后，**先在本地跑通再提 PR**，能挡掉大部分低级错误：
 
@@ -13,6 +13,8 @@ node tools/check-anim.js        # 71 条：渲染、动画、DOM 复用、走势
 node tools/check-timing.js      # 22 条：房间用时计时
 node tools/check-cctclient.js   # 33 条：CCT 字段映射与占位符表
 node tools/check-goldenmode.js  # 28 条：一命模式三态表与两条布局约束
+node tools/check-goldenfsm.js   # 25 条：一命模式状态机（拿起/死亡锁/冷却窗口/换章重置）
+node tools/check-streaklive.js  # 25 条：走势条实时增量（暂停追踪下的成败推断与拼接）
 ```
 
 **依赖**：node + Edge（Chromium 内核，Windows 自带）。
@@ -25,10 +27,12 @@ node tools/check-goldenmode.js  # 28 条：一命模式三态表与两条布局�
 
 | 改动 | 要跑/要看 |
 | --- | --- |
-| `ExternalOverlay/` 下的任何文件 | 四套全跑 |
+| `ExternalOverlay/` 下的任何文件 | 六套全跑 |
 | DOM 结构（加卡片、改 id/class） | 还要同步改 `tools/fixtures/anim_case.html` |
 | `CCTOverlay.js` 的 CctClient 分区 | `check-cctclient.js` 会校验切片标记和表顺序 |
 | `CCTOverlay.js` 的 GoldenMode 分区 | `check-goldenmode.js` 会校验三态字段、两条布局约束、文案是否又散落出去 |
+| `CCTOverlay.js` 的 `updateGoldenMode` 状态机 | `check-goldenfsm.js` 按函数边界提取验证（改函数名/搬位置要同步提取方式） |
+| `CCTOverlay.js` 的 `liveGolden` 实时增量 | `check-streaklive.js` 按区间提取验证 |
 | 加一种新模式 | 在 `GOLDEN_MODE` 里加一条即可，各渲染函数不用逐个改；`hideRoomInfoRow` / `streakKeepWhenEmpty` 按新模式的布局定 |
 | 占位符表 | 同步 `tools/diag.ps1`（它是独立维护的，测试会校验它没漂移） |
 
