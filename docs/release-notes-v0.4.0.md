@@ -67,7 +67,7 @@
 
 ## 安装
 
-**覆盖层的装法和之前完全一样** —— 下载 `ExternalOverlay.zip`，
+**覆盖层的装法和之前完全一样** —— 下载 `MapClearingStats-Overlay-v0.4.0.zip`，
 把整个文件夹覆盖到：
 
 ```
