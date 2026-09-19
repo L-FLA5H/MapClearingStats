@@ -568,6 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveChapterHistory();
     });
     setInterval(function () {
+        if (pipSuspended) return;   // 悬浮模式期间由悬浮窗口那份负责存档
         saveSession();
         saveChapterHistory();
     }, 12000);
@@ -579,6 +580,7 @@ document.addEventListener('DOMContentLoaded', () => {
          + " · 房间死亡记录=" + nDeaths + " 个"
          + (nDeaths ? " " + JSON.stringify(session.roomDeaths) : ""));
 
+    wireFloatButton();
     bootIn();
     setInterval(tick, TICK_MS);
     requestAnimationFrame(timerLoop);
@@ -597,6 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
 //   pollScene → reconcileSession → resolveGoldenMode / renderUpper
 //            → locateRoom → settleTiming → renderLower
 async function tick() {
+    if (pipSuspended) return;      // 悬浮模式下主窗口这份挂起（见 enterFloatMode）
     // ① 看场景：现在人在关卡里吗
     const scene = await pollScene();
     if (!scene.inLevel) {
@@ -1198,6 +1201,8 @@ function loadChapterHistory(chapterName) {
 }
 
 function timerLoop() {
+    // 悬浮模式下挂起：不再画，但继续排下一帧，还原时不用重新起循环
+    if (pipSuspended) { requestAnimationFrame(timerLoop); return; }
     updateTransition();
     updateRateTween();      // 成功率的数值补间
 
@@ -2564,3 +2569,126 @@ window.mcs = {
     // 调试辅助函数一旦带「清空数据」这种副作用，只要浏览器重放控制台命令就会反复触发。
     // 需要清空数据时，用 DevTools → Application → Session Storage → 右键 Clear。
 };
+
+
+// ===== 置顶悬浮模式（Document Picture-in-Picture）=====
+//
+// 给「不直播、只想自己看」的人用：点一下把覆盖层放进一个始终置顶的小窗口，
+// 可以拖动、可以缩放，同时还能看别的窗口。再点一下还原。
+//
+// ⚠️⚠️ 为什么不能把 #app 直接搬进悬浮窗口：
+//   全库有 50 多处 document.getElementById / querySelector，搬走之后主窗口
+//   就全查不到了，等于把覆盖层拆了。
+//   所以改成「复制 body 结构 → 在悬浮窗口里重新跑一遍脚本」，
+//   悬浮窗口里跑的是自己的一份完整实例。
+//
+// ⚠️ 悬浮窗口**不能被导航**（规范限制），所以也没法让那边直接打开本页面。
+
+let pipSuspended = false;       // 主窗口的循环是否被悬浮模式挂起
+let pipWindow = null;           // 悬浮窗口的 window 对象
+let pipIsFloatWindow = false;   // 当前这份实例是不是跑在悬浮窗口里
+
+function floatSupported() {
+    return typeof window.documentPictureInPicture !== "undefined"
+        && typeof window.documentPictureInPicture.requestWindow === "function";
+}
+
+function copyStylesTo(targetDoc) {
+    // 逐条复制 CSS 规则（file:// 下 styleSheets 同源，能直接读 cssRules）。
+    // 读不到就退化成复制 <link> 标签。
+    for (const sheet of Array.from(document.styleSheets)) {
+        let cssText = "";
+        try {
+            cssText = Array.from(sheet.cssRules).map(r => r.cssText).join("\n");
+        } catch (e) {
+            if (sheet.href) {
+                const link = targetDoc.createElement("link");
+                link.rel = "stylesheet";
+                link.href = sheet.href;
+                targetDoc.head.appendChild(link);
+            }
+            continue;
+        }
+        const style = targetDoc.createElement("style");
+        style.textContent = cssText;
+        targetDoc.head.appendChild(style);
+    }
+}
+
+async function enterFloatMode() {
+    if (pipWindow || pipIsFloatWindow) return;
+
+    let pip;
+    try {
+        pip = await window.documentPictureInPicture.requestWindow({ width: 620, height: 400 });
+    } catch (e) {
+        setNotice("悬浮窗口打开失败：" + (e && e.message ? e.message : e));
+        return;
+    }
+    pipWindow = pip;
+
+    copyStylesTo(pip.document);
+
+    // 只复制结构。innerHTML 插进去的 <script> 不会执行，所以脚本要单独加。
+    pip.document.body.innerHTML = document.body.innerHTML;
+
+    // 标记「这是悬浮窗口里的实例」
+    const flag = pip.document.createElement("script");
+    flag.textContent = "window.__mcsFloatWindow = true;";
+    pip.document.body.appendChild(flag);
+
+    // 再把脚本重新加载一遍。
+    // ⚠️ 路径要从当前页面已有的 <script src> 里取，别写死文件名 ——
+    //    部署时是 "Timing.js"，但自检夹具里是 "../../ExternalOverlay/Timing.js"。
+    const srcs = Array.from(document.querySelectorAll("script[src]"))
+        .map(function (el) { return el.getAttribute("src"); })
+        .filter(Boolean);
+    srcs.forEach(function (src) {
+        const el = pip.document.createElement("script");
+        el.src = src;
+        pip.document.body.appendChild(el);
+    });
+
+    // 主窗口挂起：停掉轮询，避免两个实例同时写 localStorage
+    pipSuspended = true;
+    document.body.classList.add("floating-out");
+    dlog("◆ 已进入悬浮模式，主窗口挂起");
+
+    pip.addEventListener("pagehide", function () {
+        pipWindow = null;
+        pipSuspended = false;
+        document.body.classList.remove("floating-out");
+        // 悬浮窗口跑过一段时间，主窗口这份的会话状态已经旧了 —— 重新加载最省心
+        // （数据都在 localStorage 里，不会丢）
+        location.reload();
+    });
+}
+
+function exitFloatMode() {
+    if (pipWindow) { pipWindow.close(); return; }
+    if (pipIsFloatWindow) window.close();
+}
+
+function wireFloatButton() {
+    pipIsFloatWindow = !!window.__mcsFloatWindow;
+
+    // 悬浮窗口那份永远要显示按钮（用来「还原」）
+    if (!pipIsFloatWindow && !floatSupported()) {
+        document.body.classList.add("no-pip");    // OBS 的 CEF 走这里
+        return;
+    }
+
+    const btn = document.getElementById("float-btn");
+    const label = document.getElementById("float-btn-text");
+    if (!btn) return;
+
+    if (label) label.textContent = pipIsFloatWindow ? "还原" : "置顶悬浮";
+    btn.title = pipIsFloatWindow
+        ? "关掉悬浮窗口，回到浏览器页面里显示"
+        : "把覆盖层放进一个置顶小窗口（可以拖动、缩放）";
+
+    btn.addEventListener("click", function () {
+        if (pipIsFloatWindow) exitFloatMode();
+        else enterFloatMode();
+    });
+}

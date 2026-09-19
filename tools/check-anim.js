@@ -505,6 +505,100 @@ function check(name, ok, detail) {
         cardLayer.flyOut.gold && !cardLayer.flyOut.green,
         'anim=' + cardLayer.flyOut.anim);
 
+    // ============ ⑪ 置顶悬浮 ============
+    // 用 iframe 冒充 Document PiP 窗口来端到端验证：
+    // 复制样式 → 复制结构 → 在那边重新跑脚本 → 主窗口挂起。
+    //
+    // ⚠️ 必须用 Object.defineProperty 覆盖 documentPictureInPicture ——
+    //    它是「只有 getter」的属性，直接赋值会**静默失败**（非严格模式），
+    //    结果调到真的 requestWindow，报 "requires user activation"。
+    // ⚠️ 这一段必须放最后：它会挂起主窗口的循环。
+    console.log('');
+    console.log('== ⑪ 置顶悬浮 ==');
+
+    const fb = JSON.parse(await ev(`(function(){
+        const btn = document.getElementById("float-btn");
+        const label = document.getElementById("float-btn-text");
+        return JSON.stringify({
+            exists: !!btn,
+            label: label ? label.textContent : "(无)",
+            hasFloatFn: typeof enterFloatMode === "function",
+        });
+    })()`));
+    check('悬浮按钮在页面上', fb.exists, 'label=' + fb.label);
+    check('按钮文字是「置顶悬浮」', fb.label === '置顶悬浮', fb.label);
+    check('enterFloatMode 已定义', fb.hasFloatFn);
+
+    const floatFlow = JSON.parse(await ev(`(async function(){
+        const iframe = document.createElement("iframe");
+        iframe.style.cssText = "position:fixed;left:-9999px;width:400px;height:300px;";
+        document.body.appendChild(iframe);
+        const fake = iframe.contentWindow;
+
+        Object.defineProperty(window, "documentPictureInPicture", {
+            value: { requestWindow: async function(){ return fake; } },
+            configurable: true,
+        });
+
+        const out = {};
+        try {
+            await enterFloatMode();
+        } catch (e) {
+            out.error = String(e && e.message || e);
+        }
+        await new Promise(function(r){ setTimeout(r, 1400); });   // 等脚本在那边跑起来
+
+        const fd = fake.document;
+        out.suspended = pipSuspended;
+        out.mainDimmed = document.body.classList.contains("floating-out");
+        out.clonedApp = !!fd.getElementById("app");
+        out.clonedCards = fd.querySelectorAll(".card").length;
+        out.styles = fd.querySelectorAll("style, link[rel=stylesheet]").length;
+        out.scripts = Array.from(fd.querySelectorAll("script[src]")).map(function(s){ return s.getAttribute("src"); });
+        const lbl = fd.getElementById("float-btn-text");
+        out.floatBtnLabel = lbl ? lbl.textContent : "(无)";
+
+        // 按钮文案翻转：主窗口是「置顶悬浮」，悬浮窗口里应该是「还原」
+        const mainLabel = document.getElementById("float-btn-text");
+        out.mainLabelBefore = mainLabel ? mainLabel.textContent : "(无)";
+        window.__mcsFloatWindow = true;
+        wireFloatButton();
+        out.mainLabelFloat = mainLabel ? mainLabel.textContent : "(无)";
+        delete window.__mcsFloatWindow;
+        wireFloatButton();
+        out.mainLabelBack = mainLabel ? mainLabel.textContent : "(无)";
+
+        // 收尾：还原，别影响后面
+        pipSuspended = false;
+        document.body.classList.remove("floating-out");
+        iframe.remove();
+        delete window.documentPictureInPicture;
+        return JSON.stringify(out);
+    })()`));
+
+    check('悬浮流程没有报错', !floatFlow.error, floatFlow.error || '');
+    check('进入悬浮后主窗口挂起', floatFlow.suspended === true);
+    check('主窗口那份变暗（提示已悬浮）', floatFlow.mainDimmed === true);
+    check('悬浮窗口里有完整的覆盖层结构',
+        floatFlow.clonedApp && floatFlow.clonedCards === 3,
+        'app=' + floatFlow.clonedApp + ' cards=' + floatFlow.clonedCards);
+    check('样式复制过去了', floatFlow.styles > 0, floatFlow.styles + ' 条');
+    // ⚠️ iframe 代理有个限制：about:blank 里加载 file:// 子资源会被拦，
+    //    所以「克隆出来的脚本真的跑起来了」这件事在测试里验不了（真实 PiP 窗口没这限制）。
+    //    这里只验「脚本标签加对了没」，执行路径靠下面单独验按钮文案。
+    const srcs = floatFlow.scripts || [];
+    const added = srcs.filter(function (x) { return srcs.indexOf(x) === srcs.lastIndexOf(x); });
+    check('悬浮窗口里按钮显示「还原」', floatFlow.mainLabelFloat === '还原',
+        floatFlow.mainLabelBefore + ' → ' + floatFlow.mainLabelFloat);
+    check('回到主窗口按钮又变回「置顶悬浮」', floatFlow.mainLabelBack === '置顶悬浮', floatFlow.mainLabelBack);
+    check('克隆结构里的脚本标签保留了（innerHTML 插的不会执行）', srcs.length >= 2,
+        JSON.stringify(srcs));
+    check('两个脚本被追加进悬浮窗口（路径从 DOM 取，没写死）',
+        srcs.filter(function (s) { return /Timing\.js$/.test(s); }).length >= 2 &&
+        srcs.filter(function (s) { return /CCTOverlay\.js$/.test(s); }).length >= 2,
+        JSON.stringify(srcs));
+
+
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);

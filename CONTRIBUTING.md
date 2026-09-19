@@ -9,7 +9,7 @@
 改动覆盖层之后，**先在本地跑通再提 PR**，能挡掉大部分低级错误：
 
 ```bash
-node tools/check-anim.js        # 31 条：渲染、动画、DOM 复用、走势条
+node tools/check-anim.js        # 55 条：渲染、动画、DOM 复用、走势条、进度小节、置顶悬浮
 node tools/check-timing.js      # 22 条：房间用时计时
 node tools/check-cctclient.js   # 32 条：CCT 字段映射与占位符表
 ```

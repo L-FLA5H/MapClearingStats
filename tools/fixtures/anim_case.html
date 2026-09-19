@@ -195,6 +195,11 @@ window.fetch = async function(url, opts){
   return { json: async function(){ return d; } };
 };
 </script>
+
+    <!-- 和真实 HTML 保持一致：悬浮按钮（check-anim.js 第 ⑪ 段会检查） -->
+    <button id="float-btn" type="button">
+        <span id="float-btn-text">置顶悬浮</span>
+    </button>
 <script src="../../ExternalOverlay/Timing.js"></script>
 <script src="../../ExternalOverlay/CCTOverlay.js"></script>
 </body>
