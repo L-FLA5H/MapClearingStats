@@ -197,10 +197,6 @@ let session = loadSession();
 
 let lastShownTotalDeaths = 0;
 let lastShownRoomDeaths = 0;
-// 「第二张卡片右格」上一帧显示的数值。
-// 初见模式是毫秒计时（小数），一命模式是连续成功次数（整数），共用一个比较基准，
-// 用来判断「数值涨了」并播一次 bump 放大动画。
-let lastShownRoomTimeValue = 0;
 // 第二张卡片上一帧渲染时的房间名与模式。
 // ⚠️ 这两个是「要不要重绘第二张卡片」的判据 ——
 // renderRoomInfo 原来只在换房间时被调用，导致「在同一个房间拿起金草莓」
@@ -237,10 +233,9 @@ let transitionSeen = false;
 let pendingChapterRestart = false;
 // 恢复历史后，暂存「上次离开时所在的房间」，等拿到当前房间再判断进度有没有被重置
 let pendingResumeRoom = null;
-// 走势条：当前显示的是哪个房间 + 已经渲染了多少个点
-// （用来判断「有没有新的一次尝试」，只有新增才播弹出动画）
+// 走势条：当前显示的是哪个房间（换房间要重置弹出动画的判定，
+// 并把整条走势换成新房间数据——见 renderStreak 的 isNewRoom 分支）
 let lastStreakRoom = "";
-let lastStreakCount = -1;
 // 走势点序列的内容签名（如 "0011011"）。
 // ⚠️ 必须比对内容，不能只比对数量 —— 见 renderStreak 里的说明。
 let lastStreakSig = "";
@@ -249,7 +244,6 @@ let lastStreakSig = "";
 //    根因：initSession 把 session.roomDeaths 清成 {}、lastShownRoomDeaths 也归 0，
 //    于是 renderRoomInfo 的判据「房间没变 + 模式没变 + 死亡数没变」全部为假 →
 //    **直接 return，DOM 里还留着旧数字**。
-//    注意 displayedRoomDeaths 其实已经归 0 了，只是没人去写 DOM。
 let forceRoomInfoRefresh = false;
 // ⚠️⚠️ 刚重开章节 / 刚初始化后，detectDeaths 第一次只**记录基准**、不计数。
 //    小闪：「先在第一面自杀一次，重新开始章节，还是会有一次死亡，没清空」。
@@ -360,22 +354,22 @@ const CctClient = (function () {
     ];
 
     // ---- goldenType 映射 ----
-    // CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
-    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
-    //    所以做成**多来源 + 容错**：
-    //      · 主来源 stats.chapterStats.goldenType
-    //      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
-    //        但多读一处没有副作用，将来 CCT 补上了就能直接用）
-    //      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
-    //
-    // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名猜：
+    // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名或 DLL 文档猜：
     //     带银（Scroogle 章）      → goldenType = 1
     //     带金（ZZ-HeartSide 章）  → goldenType = 0
     //   而且它在**章节加载的那一刻就定下来了**（还没拿起草莓就已经是这个值），
     //   说明它是**章节级**属性，不是草莓级的。
-    //   → 所以：0 = 金，非 0 = 银。
-    // ⚠️ 之前写成「1 = 金、2 = 银」是错的，这正是小闪反馈
-    //    「带银时卡片没变银而是变金」的根因。
+    //   → 所以：**0 = 金，任何非 0 = 银**（含 2/3+，见下面的容错）。
+    //
+    //   历史注记：CCT 的 DLL 文档写的是「0 = 没拿 / 未确定，1 = 金，2 = 银」，
+    //   与实测相反。曾按 DLL 文档实现成「1 = 金、2 = 银」，
+    //   这正是小闪反馈「带银时卡片没变银而是变金」的根因。别再改回去。
+    //
+    //   多来源 + 容错：
+    //     · 主来源 stats.chapterStats.goldenType
+    //     · 备用 state.modState.goldenType（实测 modState 里没这个字段，
+    //       但多读一处没有副作用，将来 CCT 补上了就能直接用）
+    //     · 非 0 一律按银处理（万一 CCT 用 2/3 表示银也不会翻车）
     function goldenType(stats, state) {
         const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
         const b = (state && state.modState) ? state.modState.goldenType : undefined;
@@ -531,12 +525,6 @@ const GOLDEN_DROP_GRACE_MS = 500;
 let goldenDiedAt = 0;
 const GOLDEN_DEATH_HOLD_MS = 2500;   // 死亡后这段时间内不允许重新进入带金状态
 
-// 「本次挑战用时」的自算累积器。
-// CCT 的 timeSpentInRoomInRuns 是**单房间**累计，而且换个存档/重开就重置；
-// 想要「这一轮一命挑战总共打了多久」，只能自己边打边攒。
-let goldenRunSec = 0;
-let goldenRunTickAt = 0;
-
 // 每 tick 调用。返回 true 表示「模式刚发生变化，需要重绘 + 播切换动画」。
 function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
     // 换章节 → 重置，重新等这一次的「拿起草莓」
@@ -545,8 +533,6 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
         goldenModeName = "normal";
         goldenDropAt = 0;
         goldenDiedAt = 0;
-        goldenRunSec = 0;
-        goldenRunTickAt = 0;
     }
 
     const gt = goldenType || 0;
@@ -700,35 +686,46 @@ if (document.readyState === "loading") {
 //
 //   pollScene → reconcileSession → resolveGoldenMode / renderUpper
 //            → locateRoom → settleTiming → renderLower
+// ⚠️ 重入守卫：tick 是 async，而 setInterval 不等上一轮跑完。CCT 卡住
+//    （不拒绝、也不返回）时，后续 tick 会每 500ms 叠一层，多个 tick 并发跑
+//    reconcile/render/save。守卫保证同一时刻最多一轮在跑。
+let ticking = false;
+
 async function tick() {
     if (pipSuspended) return;      // 悬浮模式下主窗口这份挂起（见 enterFloatMode）
-    // ① 看场景：现在人在关卡里吗
-    const scene = await pollScene();
-    if (!scene.inLevel) {
-        handleOutsideLevel(scene.sceneType);
-        return;
+    if (ticking) return;
+    ticking = true;
+    try {
+        // ① 看场景：现在人在关卡里吗
+        const scene = await pollScene();
+        if (!scene.inLevel) {
+            handleOutsideLevel(scene.sceneType);
+            return;
+        }
+
+        // ② 拉 CCT 数据 → 对齐会话（重开 / 换章 / 恢复历史 / 进度有没有保留）
+        const data = await readCct();
+        if (!data) return;
+        const ctx = reconcileSession(data.state, data.path);
+
+        // ③ 判定一命模式 + 上半渲染
+        const mode = resolveGoldenMode(data.state, data.stats, ctx.currentRoom);
+        renderUpper(data.state, data.stats, ctx.hasPath, ctx.currentRoom,
+                    mode.diedNow, mode.goldenChanged);
+
+        // ④ 定位当前房间（没有录制路径、或不在路径上时，内部会处理渲染并放弃后续步骤）
+        const place = locateRoom(data.path, ctx.currentRoom, ctx.hasPath);
+        if (!place) return;
+
+        // ⑤ 结算时间：补偿暂停 → 结算上一面 → 记下进本房时刻
+        settleTiming(ctx.currentRoom);
+
+        // ⑥ 下半渲染：房间信息卡 + 小节进度
+        renderLower(data.path, data.state, ctx.hasPath, ctx.currentRoom,
+                    place.cpIndex, place.roomIndex, place.cp);
+    } finally {
+        ticking = false;
     }
-
-    // ② 拉 CCT 数据 → 对齐会话（重开 / 换章 / 恢复历史 / 进度有没有保留）
-    const data = await readCct();
-    if (!data) return;
-    const ctx = reconcileSession(data.state, data.path);
-
-    // ③ 判定一命模式 + 上半渲染
-    const mode = resolveGoldenMode(data.state, data.stats, ctx.currentRoom);
-    renderUpper(data.state, data.stats, ctx.hasPath, ctx.currentRoom,
-                mode.diedNow, mode.goldenChanged);
-
-    // ④ 定位当前房间（没有录制路径、或不在路径上时，内部会处理渲染并放弃后续步骤）
-    const place = locateRoom(data.path, ctx.currentRoom, ctx.hasPath);
-    if (!place) return;
-
-    // ⑤ 结算时间：补偿暂停 → 结算上一面 → 记下进本房时刻
-    settleTiming(ctx.currentRoom);
-
-    // ⑥ 下半渲染：房间信息卡 + 小节进度
-    renderLower(data.path, data.state, ctx.hasPath, ctx.currentRoom,
-                place.cpIndex, place.roomIndex, place.cp);
 }
 
 // ① 从 LevelWatcher 读当前场景
@@ -787,26 +784,48 @@ async function pollScene() {
 }
 
 // ① 的出口之一：不在关卡内 → 存档、停表、显示状态卡
+// 不在关卡内时本函数每 tick（500ms）都会被调；原来每次都全量重写
+// localStorage（saveChapterHistory 还要 parse 整个 chapters 对象），
+// 挂机在标题界面几小时就是上万次无意义写入。会话内容没变就不写。
+// ⚠️ 比较发生在 pauseTimer 之前：第一轮存的 totalSec 与旧口径一致（未暂停）。
+let lastOutsideSaveSig = null;
+
 function handleOutsideLevel(sceneType) {
-    // 不在关卡内：保存当前章节数据到历史
-    if (session.chapterName) {
-        saveChapterHistory();
+    const sig = JSON.stringify(session);
+    if (sig !== lastOutsideSaveSig) {
+        lastOutsideSaveSig = sig;
+        // 不在关卡内：保存当前章节数据到历史
+        if (session.chapterName) {
+            saveChapterHistory();
+        }
+        saveSession();
     }
     pauseTimer();
     showStatusCard(getStatusText(sceneType));
-    saveSession();
 }
 
-// ② 拉 CCT 的三个接口；拿不到就放弃这一轮
+// ⚠️ 瞬时失败去抖：原来任何一次请求失败都立刻打「CCT 未响应」状态卡，
+//    网络抖一下直播画面就 500ms 一闪。现在连续 CCT_FAIL_STREAK_LIMIT 次
+//    失败才显示。停表（pauseTimer）不参与去抖——计时正确性优先，
+//    多停的时长会被恢复时的补偿机制抹掉。
+let cctFailStreak = 0;
+const CCT_FAIL_STREAK_LIMIT = 2;
+
+// ② 拉 CCT 的三个接口；拿不到就放弃这一轮。
+// ⚠️ 三个请求互不依赖，Promise.all 并行（原来是串行 await，延迟 3×RTT）。
 async function readCct() {
     let state, path, stats;
     try {
-        state = await fetchJson("/cct/state");
-        path  = await fetchJson("/cct/currentChapterPath");
-        stats = await fetchJson("/cct/currentChapterStats");
+        [state, path, stats] = await Promise.all([
+            fetchJson("/cct/state"),
+            fetchJson("/cct/currentChapterPath"),
+            fetchJson("/cct/currentChapterStats"),
+        ]);
+        cctFailStreak = 0;
     } catch (e) {
-        showStatusCard("CCT 未响应");
+        cctFailStreak++;
         pauseTimer();
+        if (cctFailStreak >= CCT_FAIL_STREAK_LIMIT) showStatusCard("CCT 未响应");
         return null;
     }
     return { state, path, stats };
@@ -823,7 +842,7 @@ function reconcileSession(state, path) {
         if (session.chapterName && session.chapterName === chapterName) {
             dlog("⟲ 重新开始此章节 → 用时、死亡数、房间进度全部清零");
             dstate("清零前");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
             saveChapterHistory();   // 把历史也覆盖成清空后的状态
             dstate("清零后");
         }
@@ -842,7 +861,7 @@ function reconcileSession(state, path) {
             saveSession();
         } else {
             dlog("  → 没有历史，新建会话（计时归零）");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
         }
         dstate("章节变化-改之后");
     }
@@ -861,7 +880,7 @@ function reconcileSession(state, path) {
             dlog("⟲ 进度没保留（上次离开在「" + prevRoom + "」，这次却从「"
                  + currentRoom + "」开始）→ 用时、死亡数、房间进度全部清零");
             dstate("清零前");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
             saveChapterHistory();
             dstate("清零后");
         } else {
@@ -873,7 +892,7 @@ function reconcileSession(state, path) {
     return { hasPath, currentRoom };
 }
 
-// ③ 判定一命挑战模式（带金 / 带银），顺带累积「本次挑战用时」
+// ③ 判定一命挑战模式（带金 / 带银）
 function resolveGoldenMode(state, stats, currentRoom) {
     // 返回本次新增的死亡数 → 作为「刚刚死了」的信号传给一命模式判定，
     // 让它能立刻退出带金布局（不等 CCT 那个滞后 1 秒多的手持标志）。
@@ -892,21 +911,6 @@ function resolveGoldenMode(state, stats, currentRoom) {
     const goldenType = readGoldenType(stats, state);
     const goldenChanged = updateGoldenMode(
         state.chapterName || "", goldenType, snap.holdingGolden, diedNow);
-
-    // 「本次一命挑战累计用时」：只在真正带金挑战期间累积
-    // ⚠️ 模式刚在 updateGoldenMode 里更新过，这里取到的已是本 tick 的最新值
-    const mode = curGoldenMode();
-    const now = Date.now();
-    if (mode.challenge && !session.isPaused) {
-        if (goldenRunTickAt > 0) {
-            const dt = (now - goldenRunTickAt) / 1000;
-            // 卡顿超过 3 秒（切场景、最小化）不计入，防止一次性灌进来一大段时间
-            if (dt > 0 && dt < 3) goldenRunSec += dt;
-        }
-        goldenRunTickAt = now;
-    } else {
-        goldenRunTickAt = 0;
-    }
 
     return { diedNow, goldenChanged };
 }
@@ -964,8 +968,7 @@ function locateRoom(path, currentRoom, hasPath) {
     if (!inPath) {
         setNotice("");
         renderSectionsOutside();
-        resumeTimer();
-        session.isPaused = false;
+        resumeTimer();   // 内部已置 isPaused = false，不必再写一遍
         saveSession();
         return null;
     }
@@ -1137,34 +1140,58 @@ function renderOutsideText(text) {
 function renderSectionsEmptyWithText(text) { renderOutsideText(text); }
 function renderSectionsOutside() { renderOutsideText("当前不在路径中"); }
 
+// ---- 死亡判定的纯函数核心 ----
+// 根据 CCT 报的「本房·本命死亡数」（curDeaths）算出本次新增死亡数。
+// 只做三种判定：种子基准 / 正常增量 / 归零重基准。零 DOM、零存档、零日志——
+// 死亡红光、saveSession 与日志都留在外壳 detectDeaths 里，
+// 所以 tools/check-deaths.js 能按函数边界提取本函数直接单测（手法同 check-goldenfsm.js）。
+//
+// ⚠️ lastCurDeaths 是调用方的状态袋（session.lastCurDeaths），本函数会**就地更新**
+//    「当前房间」那一项；除此之外不碰任何传入对象。
+// ⚠️ deathsInCurrentRun 的口径是「本房·本命」（CCT 开新命会清零），逐房存基准
+//    不会跨房串数；返回值 rebased=true 表示发生了归零重基准（外壳据此打日志）。
+function detectDeathsCore(lastCurDeaths, currentRoom, curDeaths, seedOnly) {
+    if (!lastCurDeaths) lastCurDeaths = {};
+    const prev = lastCurDeaths[currentRoom] || 0;
+
+    // 重开章节后的第一次检测：只记录基准，不计数（见 seedDeathsOnly 的注释）
+    if (seedOnly) {
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: 0, prev: prev, rebased: false, seedOnly: false };
+    }
+
+    if (curDeaths > prev) {
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: curDeaths - prev, prev: prev, rebased: false, seedOnly: false };
+    }
+    if (curDeaths < prev) {
+        // 这是正常现象：CCT 在新的一条命开始时会把「本命死亡数」清零，
+        // 所以玩家离开房间再回来时会看到它变小。已经累加过的死亡数不会丢。
+        lastCurDeaths[currentRoom] = curDeaths;
+        return { delta: 0, prev: prev, rebased: true, seedOnly: false };
+    }
+    return { delta: 0, prev: prev, rebased: false, seedOnly: false };
+}
+
 function detectDeaths(state, stats, currentRoom) {
     const curDeaths = CctClient.snapshot(state).deathsInCurrentRun;
     if (!session.lastCurDeaths) session.lastCurDeaths = {};
-    const prevCur = session.lastCurDeaths[currentRoom] || 0;
-    let delta = 0;
+    const wasSeed = seedDeathsOnly;
+    const r = detectDeathsCore(session.lastCurDeaths, currentRoom, curDeaths, seedDeathsOnly);
+    seedDeathsOnly = r.seedOnly;
 
-    // ⚠️ 重开章节后的第一次检测：只记录基准，不计数（见 seedDeathsOnly 的注释）
-    if (seedDeathsOnly) {
-        seedDeathsOnly = false;
-        session.lastCurDeaths[currentRoom] = curDeaths;
+    if (wasSeed) {
         dlog("⟲ 重开后首次检测：只记基准 deathsInCurrentRun=" + curDeaths + "，不计数");
         return 0;
     }
-
-    if (curDeaths > prevCur) {
-        delta += curDeaths - prevCur;
-        session.lastCurDeaths[currentRoom] = curDeaths;
-    } else if (curDeaths < prevCur) {
-        // 这是正常现象：CCT 在新的一条命开始时会把「本命死亡数」清零，
-        // 所以玩家离开房间再回来时会看到它变小。已经累加过的死亡数不会丢。
-        dlog("ℹ 死亡计数归零: 房间 " + currentRoom + " " + prevCur + " → " + curDeaths
+    if (r.rebased) {
+        dlog("ℹ 死亡计数归零: 房间 " + currentRoom + " " + r.prev + " → " + curDeaths
              + "（CCT 开了新的一条命，正常现象）");
-        session.lastCurDeaths[currentRoom] = curDeaths;
     }
 
-    if (delta > 0) {
-        session.roomDeaths[currentRoom] = (session.roomDeaths[currentRoom] || 0) + delta;
-        dlog("💀 死亡 +" + delta + " 房间 " + currentRoom
+    if (r.delta > 0) {
+        session.roomDeaths[currentRoom] = (session.roomDeaths[currentRoom] || 0) + r.delta;
+        dlog("💀 死亡 +" + r.delta + " 房间 " + currentRoom
              + " → 本房累计 " + session.roomDeaths[currentRoom]);
 
         // 死亡时顶部卡片红光一闪（靠 transition 淡入淡出，比 keyframes 更好控制）
@@ -1182,7 +1209,7 @@ function detectDeaths(state, stats, currentRoom) {
     // ⚠️ 这是「死亡事件」最可靠的信号，而且比 CCT 的 playerIsHoldingGolden 快得多：
     //    实测日志里死亡计数在 11:58:23.930 就变了，手持标志到 11:58:25.193 才翻 false。
     //    一命挑战要靠它做到「死了立刻回正常状态」。
-    return delta;
+    return r.delta;
 }
 
 function pauseTimer() {
@@ -1214,10 +1241,9 @@ function resumeTimer() {
     }
 }
 
-function initSession(chapterName, path) {
+function initSession(chapterName) {
     session = {
         chapterName: chapterName,
-        path: path,
         startTime: Date.now(),
         lastRoom: "",
         currentRoomEnterTime: Date.now(),
@@ -1240,8 +1266,6 @@ function initSession(chapterName, path) {
     stopPctAnim();
     displayedPct = 0;
     transition = null;
-    displayedRoomDeaths = 0;
-    displayedRoomTimeSec = 0;
     // 让下一次 renderRoomInfo 无条件重绘（见 forceRoomInfoRefresh 的注释）
     forceRoomInfoRefresh = true;
     resetRateTween();
@@ -1276,7 +1300,7 @@ function saveChapterHistory() {
             savedAt: Date.now(),          // 存时间戳，load 时用来判断「隔了多久」
         };
         store.set(CHAPTERS_KEY, JSON.stringify(all));
-    } catch (e) {}
+    } catch (e) { dlog("⚠ 章节历史存档失败：" + e.message); }
 }
 
 function loadChapterHistory(chapterName) {
@@ -1287,7 +1311,6 @@ function loadChapterHistory(chapterName) {
         const now = Timing.nowMs(session);
         return {
             chapterName: chapterName,
-            path: session.path,
             // 用「累计用时」反推开始时间戳，这样暂停/在别的图待的时间不会被算进来
             // （兼容旧格式：老数据存的是 startTime）
             startTime: (data.totalSec !== undefined)
@@ -1330,7 +1353,6 @@ function timerLoop() {
             const el2 = document.getElementById("room-time");
             const v = accumulated + currentStay;
             if (el2) el2.textContent = formatMS(v);
-            lastShownRoomTimeValue = v;
         }
     }
     requestAnimationFrame(timerLoop);
@@ -1380,7 +1402,6 @@ function renderHeader(state, stats, valid) {
     setLabel("blk1-label", "本面死亡");
     setIcon("blk2-icon", "⏱️");
     setLabel("blk2-label", "本面用时");
-    show("#avg-line", true);
 
     let total = 0;
     for (const v of Object.values(session.roomDeaths)) total += v;
@@ -1596,6 +1617,11 @@ function buildStreakAttempts(snap) {
     return base.concat(liveGolden.extra);
 }
 
+// ⚠️ 请求序号：busy 超时强制解锁后，旧请求若最终才返回，
+//    不能用旧数据覆盖新数据（也不能把新请求的 busy 错误地清掉）。
+//    响应回来时序号对不上就整个丢弃。
+let goldenStatsSeq = 0;
+
 async function requestGoldenStats(roomName, force) {
     const now = Date.now();
 
@@ -1618,12 +1644,17 @@ async function requestGoldenStats(roomName, force) {
     goldenStats.busyAt = now;
     goldenStats.at = now;
     goldenStats.room = roomName;
+    const seq = ++goldenStatsSeq;
     try {
         // 占位符表在 CctClient.GOLDEN_STATS_PLACEHOLDERS（单一来源，
         // 实测对照与「UTF-16 抓取」的教训都记在那边）。
         // 下标含义：0 成功率 / 1 通过数 / 2 进入次数 / 3 进入率 / 4 局数 /
         //           5 带金死亡（本章）/ 6 带金死亡（本次会话）
         const out = await parseFormats(CctClient.GOLDEN_STATS_PLACEHOLDERS);
+        if (seq !== goldenStatsSeq) {
+            dlog("ℹ 丢弃迟到的带金统计响应（seq=" + seq + "，当前 " + goldenStatsSeq + "）");
+            return;
+        }
         writeGoldenStats(out);
         // 走势条用这两个量做「实时增量」——见 liveGolden 那段注释
         // ⚠️ 只在 CCT 暂停死亡追踪时才需要（否则 previousAttempts 本身就是实时的，
@@ -1631,10 +1662,11 @@ async function requestGoldenStats(roomName, force) {
         noteGoldenProgress(out[2], out[1], lastTrackingPaused);
         goldenStats.ready = true;
     } catch (e) {
+        if (seq !== goldenStatsSeq) return;   // 迟到的失败同样不能动 ready
         goldenStats.ready = false;
         dlog("✗ 取带金统计失败：" + e.message);
     } finally {
-        goldenStats.busy = false;
+        if (seq === goldenStatsSeq) goldenStats.busy = false;
     }
 }
 
@@ -1992,7 +2024,6 @@ function renderStreak(state, valid, currentRoom, mode) {
             titleEl0.title = "本面还没有尝试记录";
         }
         lastStreakRoom = valid ? currentRoom : "";
-        lastStreakCount = -1;
         lastStreakSig = "";
         return;
     }
@@ -2045,7 +2076,6 @@ function renderStreak(state, valid, currentRoom, mode) {
                  (sig.length > lastStreakSig.length || shown.length >= STREAK_MAX_DOTS);
 
     lastStreakRoom = currentRoom;
-    lastStreakCount = shown.length;
     lastStreakSig = sig;
 
     // ⚠️ 小闪要求「对应位置保证只留 20 个方块」。
@@ -2113,6 +2143,13 @@ function renderStreak(state, valid, currentRoom, mode) {
                       + (attempts.length > STREAK_MAX_DOTS
                          ? "，这里显示最近 " + STREAK_MAX_DOTS + " 次" : "");
     }
+
+    // 底部「近 20 次通过率」标签同样跟随 STREAK_MAX_DOTS（HTML 里那份只是初始值）
+    const footTitleEl = document.getElementById("streak-foot-title");
+    if (footTitleEl) {
+        const ft = "近 " + STREAK_MAX_DOTS + " 次通过率";
+        if (footTitleEl.textContent !== ft) footTitleEl.textContent = ft;
+    }
 }
 
 function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
@@ -2162,9 +2199,7 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
     //    兜底把正确的布局顶掉了。第二张卡片空白的真正解法在 renderStreak 里
     //    （没数据时保留走势条、画满 20 个空位，见那边注释与 streakKeepWhenEmpty 字段）。
     show(".room-info-row", !mode.hideRoomInfoRow);
-    if (mode.hideRoomInfoRow) {
-        displayedRoomTimeSec = 0;
-    } else {
+    if (!mode.hideRoomInfoRow) {
         setLabel("blk1-label", "本面死亡");
         setIcon("blk1-icon", "💀");
         setLabel("blk2-label", "本面用时");
@@ -2175,11 +2210,9 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
         const rtReset = document.getElementById("room-time");
         if (rtReset) {
             rtReset.textContent = "00:00.000";
-            lastShownRoomTimeValue = 0;
         }
 
         const deaths = session.roomDeaths[currentRoom] || 0;
-        displayedRoomDeaths = deaths;
 
         const el = document.getElementById("room-deaths");
         if (el) {
@@ -2194,14 +2227,6 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
             }
         }
         lastShownRoomDeaths = deaths;
-
-        if (valid && session.lastRoom && session.currentRoomEnterTime) {
-            const currentStay = Timing.currentRoomStaySec(session, Timing.nowMs(session));
-            const accumulated = session.roomTimes[session.lastRoom] || 0;
-            displayedRoomTimeSec = accumulated + currentStay;
-        } else {
-            displayedRoomTimeSec = 0;
-        }
     }
 
     const el2 = document.getElementById("room-name-inline");
@@ -2585,7 +2610,7 @@ function setNotice(msg) {
 }
 
 function saveSession() {
-    try { store.set(STORAGE_KEY, JSON.stringify(session)); } catch (e) {}
+    try { store.set(STORAGE_KEY, JSON.stringify(session)); } catch (e) { dlog("⚠ 会话存档失败：" + e.message); }
 }
 function loadSession() {
     try {
@@ -2596,18 +2621,19 @@ function loadSession() {
         }
     } catch (e) {}
     return {
-        chapterName: "", path: null, startTime: 0, lastRoom: "",
+        chapterName: "", startTime: 0, lastRoom: "",
         currentRoomEnterTime: 0, roomTimes: {}, visitedRooms: {}, roomDeaths: {},
         lastCurDeaths: {}, isPaused: false, pauseStartTime: 0,
     };
 }
 
 async function fetchJson(endpoint) {
-    const res = await fetch(CCT_BASE + endpoint, { headers: { "Accept": "application/json" } });
+    // ⚠️ no-store：与 parseFormat 同理，防 CEF/OBS 缓存旧响应导致数据卡住
+    const res = await fetch(CCT_BASE + endpoint, { headers: { "Accept": "application/json" }, cache: "no-store" });
     return await res.json();
 }
 async function fetchJsonFrom(url) {
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    const res = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
     return await res.json();
 }
 

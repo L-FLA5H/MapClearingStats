@@ -94,6 +94,8 @@ public class LevelWatcherModule : EverestModule {
         bool paused = IsScenePaused(scene);
 
         response.AddHeader("Access-Control-Allow-Origin", "*");
+        // 防 OBS/CEF 缓存旧响应——覆盖层每 500ms 轮询本接口
+        response.AddHeader("Cache-Control", "no-store");
 
         string json = "{\"sceneType\":\"" + sceneType + "\",\"paused\":" + (paused ? "true" : "false") + "}";
         byte[] buffer = Encoding.UTF8.GetBytes(json);
