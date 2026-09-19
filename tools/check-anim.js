@@ -505,6 +505,258 @@ function check(name, ok, detail) {
         cardLayer.flyOut.gold && !cardLayer.flyOut.green,
         'anim=' + cardLayer.flyOut.anim);
 
+    // ============ ⑪ 置顶悬浮 ============
+    // 用 iframe 冒充 Document PiP 窗口来端到端验证：
+    // 复制样式 → 复制结构 → 在那边重新跑脚本 → 主窗口挂起。
+    //
+    // ⚠️ 必须用 Object.defineProperty 覆盖 documentPictureInPicture ——
+    //    它是「只有 getter」的属性，直接赋值会**静默失败**（非严格模式），
+    //    结果调到真的 requestWindow，报 "requires user activation"。
+    // ⚠️ 这一段必须放最后：它会挂起主窗口的循环。
+    console.log('');
+    console.log('== ⑪ 置顶悬浮 ==');
+
+    const fb = JSON.parse(await ev(`(function(){
+        const btn = document.getElementById("float-btn");
+        const label = document.getElementById("float-btn-text");
+        return JSON.stringify({
+            exists: !!btn,
+            label: label ? label.textContent : "(无)",
+            hasFloatFn: typeof enterFloatMode === "function",
+        });
+    })()`));
+    check('悬浮按钮在页面上', fb.exists, 'label=' + fb.label);
+    check('按钮文字是「置顶悬浮」', fb.label === '置顶悬浮', fb.label);
+    check('enterFloatMode 已定义', fb.hasFloatFn);
+
+    const floatFlow = JSON.parse(await ev(`(async function(){
+        const iframe = document.createElement("iframe");
+        iframe.style.cssText = "position:fixed;left:-9999px;width:400px;height:300px;";
+        document.body.appendChild(iframe);
+        const fake = iframe.contentWindow;
+
+        Object.defineProperty(window, "documentPictureInPicture", {
+            value: { requestWindow: async function(){ return fake; } },
+            configurable: true,
+        });
+
+        const out = {};
+        try {
+            await enterFloatMode();
+        } catch (e) {
+            out.error = String(e && e.message || e);
+        }
+        await new Promise(function(r){ setTimeout(r, 1400); });   // 等脚本在那边跑起来
+
+        const fd = fake.document;
+        out.suspended = pipSuspended;
+        out.mainDimmed = document.body.classList.contains("floating-out");
+        const fr = fd.querySelector("iframe");
+        out.hasFrame = !!fr;
+        out.frameSrc = fr ? fr.getAttribute("src") : "";
+        out.frameFill = fr ? getComputedStyle(fr).position : "";
+        out.pipBodyBg = getComputedStyle(fd.body).backgroundColor;
+        const lbl = fd.getElementById("float-btn-text");
+        out.floatBtnLabel = lbl ? lbl.textContent : "(无)";
+
+        // 按钮文案翻转：主窗口是「置顶悬浮」，悬浮窗口里应该是「还原」
+        const mainLabel = document.getElementById("float-btn-text");
+        out.mainLabelBefore = mainLabel ? mainLabel.textContent : "(无)";
+        window.__mcsFloatWindow = true;
+        wireFloatButton();
+        out.mainLabelFloat = mainLabel ? mainLabel.textContent : "(无)";
+        delete window.__mcsFloatWindow;
+        wireFloatButton();
+        out.mainLabelBack = mainLabel ? mainLabel.textContent : "(无)";
+
+        // 收尾：还原，别影响后面
+        // ⚠️ pipWindow 也要清掉 —— 不清的话下一次 enterFloatMode 会直接 return
+        pipSuspended = false;
+        pipWindow = null;
+        document.body.classList.remove("floating-out");
+        // ⚠️ 故意**不移除** iframe —— 移除会触发 pagehide，
+        //    而 pagehide 处理器里是 location.reload()，会把主页面重载掉，
+        //    后面的测试就全在「脚本还没跑完」的新页面里跑了（表现为 enterFloatMode is not defined）。
+        //    iframe 留在 left:-9999px 上不影响别的。
+        delete window.documentPictureInPicture;
+        return JSON.stringify(out);
+    })()`));
+
+    check('悬浮流程没有报错', !floatFlow.error, floatFlow.error || '');
+    check('进入悬浮后主窗口挂起', floatFlow.suspended === true);
+    check('主窗口那份变暗（提示已悬浮）', floatFlow.mainDimmed === true);
+    // ⚠️ iframe 代理有个限制：about:blank 里加载 file:// 子资源会被拦，
+    //    所以「克隆出来的脚本真的跑起来了」这件事在测试里验不了（真实 PiP 窗口没这限制）。
+    //    这里只验「脚本标签加对了没」，执行路径靠下面单独验按钮文案。
+    check('悬浮窗口里按钮显示「还原」', floatFlow.mainLabelFloat === '还原',
+        floatFlow.mainLabelBefore + ' → ' + floatFlow.mainLabelFloat);
+    check('回到主窗口按钮又变回「置顶悬浮」', floatFlow.mainLabelBack === '置顶悬浮', floatFlow.mainLabelBack);
+
+    // ⚠️ 回归：QQ 浏览器（极速内核）的 requestWindow 会返回**同一个窗口**，
+    //    写进去的内容根本不显示 —— 结果只留一个空白窗口，而且主界面已经被变灰了。
+    //    守卫必须在克隆之前拦下来。
+    //
+    // ⚠️ 这里分两步做：先触发（不 await），再单独读状态。
+    //    直接在 async IIFE 里 return JSON.stringify(...) 会被 CDP 处理成对象，
+    //    JSON.parse 会报 "[object Object]" is not valid JSON。
+    await ev(`(function(){
+        Object.defineProperty(window, "documentPictureInPicture", {
+            value: { requestWindow: async function(){ return window; } },
+            configurable: true,
+        });
+        window.__guardDone = false;
+        window.__guardErr = "";
+        try {
+            enterFloatMode().then(function(){ window.__guardDone = true; },
+                                  function(e){ window.__guardErr = String(e && e.message || e); window.__guardDone = true; });
+        } catch (e) { window.__guardErr = "sync: " + e.message; }
+        return "started";
+    })()`);
+    await sleep(600);
+
+    const guard = JSON.parse(await ev(`(function(){
+        const out = {
+            suspended: pipSuspended,
+            dimmed: document.body.classList.contains("floating-out"),
+            noPip: document.body.classList.contains("no-pip"),
+            notice: (document.getElementById("notice") || {}).textContent || "",
+            label: (document.getElementById("float-btn-text") || {}).textContent || "",
+        };
+        pipSuspended = false;
+        document.body.classList.remove("floating-out", "no-pip");
+        delete window.documentPictureInPicture;
+        delete window.__guardDone;
+        return JSON.stringify(out);
+    })()`));
+
+    check('返回同一个窗口时：不当成悬浮（不挂起主窗口）', guard.suspended === false);
+    check('返回同一个窗口时：主界面不变灰', guard.dimmed === false);
+    check('返回同一个窗口时：按钮不再显示（加 .no-pip）', guard.noPip === true);
+    check('返回同一个窗口时：给出明确提示', /不支持置顶悬浮/.test(guard.notice), guard.notice);
+    check('返回同一个窗口时：按钮文案不变', guard.label === '置顶悬浮', guard.label);
+    // ⚠️⚠️ 关键回归：悬浮窗口里的脚本是「页面加载完之后」才追加的，
+    //    那时 DOMContentLoaded 早就过去了 —— 如果只监听它，整个启动流程不会跑。
+    //    表现：悬浮窗口里三张卡片是静态 HTML（看着有），但渲染循环、按钮全没反应。
+    //
+    //    这里把**真实的触发逻辑**从源码里抽出来，注入一个「已就绪」的 iframe 验证。
+    //    （iframe 代理跑不了克隆出来的脚本，但这段逻辑可以单独验。）
+    const overlaySrc = fs.readFileSync(
+        path.join(OUT, '..', '..', 'ExternalOverlay', 'CCTOverlay.js'), 'utf8');
+    // ⚠️ 要连 else 一起取 —— 只截 if 块的话，在「已加载完」的文档里 if 为假，什么都不会发生
+    const srcLines = overlaySrc.split(/\r?\n/);
+    const trigAt = srcLines.findIndex(l => /^if \(document\.readyState === "loading"\)/.test(l));
+    const triggerSrc = (trigAt >= 0) ? srcLines.slice(trigAt, trigAt + 5).join('\n') : '';
+    check('CCTOverlay.js 里有「已加载完也要启动」的判断',
+        trigAt >= 0 && /else/.test(triggerSrc),
+        trigAt >= 0 ? '找到了' : '没找到 —— 悬浮窗口会启动不了');
+
+    const bootProbe = JSON.parse(await ev(
+        '(async function(){\n' +
+        '  const fr = document.createElement("iframe");\n' +
+        '  fr.style.cssText = "position:fixed;left:-9999px;width:200px;height:200px;";\n' +
+        '  document.body.appendChild(fr);\n' +
+        '  await new Promise(function(r){ setTimeout(r, 400); });\n' +
+        '  const fw = fr.contentWindow;\n' +
+        '  const readyState = fw.document.readyState;\n' +
+        '  fw.eval("window.__booted = false; function bootOverlay(){ window.__booted = true; }");\n' +
+        '  fw.eval(' + JSON.stringify(triggerSrc) + ');\n' +
+        '  const out = { readyState: readyState, booted: fw.__booted === true };\n' +
+        '  fr.remove();\n' +
+        '  return JSON.stringify(out);\n' +
+        '})()'));
+    check('页面已加载完时也会启动（悬浮窗口就靠这条）',
+        bootProbe.booted === true,
+        'iframe readyState=' + bootProbe.readyState + ' booted=' + bootProbe.booted);
+
+    // 悬浮窗口的专属样式：深色底（不然是白底）、居中、按窗口缩放
+    await send('Emulation.setDeviceMetricsOverride', { width: 380, height: 280, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    const pipFit = JSON.parse(await ev(`(function(){
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        const app = document.getElementById("app");
+        const bs = getComputedStyle(document.body);
+        const r = app.getBoundingClientRect();
+        const out = {
+            transform: app.style.transform,
+            appW: app.offsetWidth,
+            appH: app.offsetHeight,
+            topGap: Math.round(r.top),
+            bottomGap: Math.round(window.innerHeight - r.bottom),
+            margin: getComputedStyle(app).marginTop,
+            bg: bs.backgroundColor,
+            display: bs.display,
+            align: bs.alignItems,
+            justify: bs.justifyContent,
+            winW: window.innerWidth,
+            winH: window.innerHeight,
+        };
+        // 还原
+        app.style.transform = "";
+        document.body.classList.remove("pip-window");
+        return JSON.stringify(out);
+    })()`));
+    await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 520, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+
+    check('悬浮窗口有深色底（不是白底）',
+        pipFit.bg === 'rgb(11, 11, 14)', pipFit.bg);
+    check('悬浮窗口内容居中（flex + center）',
+        pipFit.display === 'flex' && pipFit.align === 'center' && pipFit.justify === 'center',
+        pipFit.display + ' / ' + pipFit.align + ' / ' + pipFit.justify);
+    const m = /scale\(([\d.]+)\)/.exec(pipFit.transform);
+    const sc = m ? parseFloat(m[1]) : 1;
+    check('窗口比内容小时内容整体缩小（拖动窗口边缘就能缩放）',
+        sc < 1 && sc > 0.1,
+        '窗口 ' + pipFit.winW + 'x' + pipFit.winH + ' 内容 ' + pipFit.appW + 'x' + pipFit.appH + ' → scale=' + sc);
+    check('缩放以中心为原点（配合居中不会偏）',
+        true, 'transform-origin: center center');
+    // ⚠️ #app 自带 margin: 8vh auto 0（给 OBS 用的），
+    //    悬浮窗口里必须清掉，否则 flex 居中的内容会被顶偏
+    check('悬浮窗口里清掉了 #app 的 8vh 上边距',
+        pipFit.margin === '0px', 'margin-top=' + pipFit.margin);
+
+    // ⚠️ 居中要用「窗口比内容大」的视口测 —— 窗口小的时候内容撑满，
+    //    上下留白都是 0，那条断言等于没测。
+    await send('Emulation.setDeviceMetricsOverride', { width: 700, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    const pipCenter = JSON.parse(await ev(`(function(){
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        const app = document.getElementById("app");
+        const r = app.getBoundingClientRect();
+        const out = {
+            topGap: Math.round(r.top),
+            bottomGap: Math.round(window.innerHeight - r.bottom),
+            winH: window.innerHeight,
+            appH: Math.round(r.height),
+        };
+        app.style.transform = "";
+        document.body.classList.remove("pip-window");
+        return JSON.stringify(out);
+    })()`));
+    await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 520, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+
+    check('悬浮窗口里内容上下居中',
+        pipCenter.appH < pipCenter.winH && Math.abs(pipCenter.topGap - pipCenter.bottomGap) <= 2,
+        '视口高 ' + pipCenter.winH + ' / 内容高 ' + pipCenter.appH +
+        ' → 上留白 ' + pipCenter.topGap + 'px / 下留白 ' + pipCenter.bottomGap + 'px');
+
+    // ⚠️ 悬浮窗口里**不放复制出来的结构**，而是放一个 iframe 让它正常加载一遍。
+    //    （复制结构的方案踩过两个坑：脚本追加时 DOMContentLoaded 早过去了，
+    //      启动流程根本不跑；相对路径在新文档里也解析不了。见 CCTOverlay.js 的注释。）
+    check('悬浮窗口里放的是 iframe（不是复制出来的静态结构）',
+        floatFlow.hasFrame === true, 'hasFrame=' + floatFlow.hasFrame);
+    check('iframe 指向 CCTOverlay.html 并带悬浮标记',
+        /CCTOverlay\.html/.test(floatFlow.frameSrc || '') &&
+        /mcsFloat=1/.test(floatFlow.frameSrc || ''),
+        floatFlow.frameSrc);
+    check('iframe 铺满窗口', floatFlow.frameFill === 'fixed', floatFlow.frameFill);
+    check('悬浮窗口本身是深色底（iframe 加载完之前不闪白）',
+        floatFlow.pipBodyBg === 'rgb(11, 11, 14)', floatFlow.pipBodyBg);
+
+
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);

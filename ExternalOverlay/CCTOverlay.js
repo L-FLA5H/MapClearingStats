@@ -547,7 +547,15 @@ function bootIn() {
     setTimeout(() => app.classList.remove("boot"), 1200);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// ===== 启动 =====
+//
+// ⚠️⚠️ 不能只监听 DOMContentLoaded。
+//   悬浮窗口（Document PiP）里的脚本是「页面已经加载完之后」才追加进去的，
+//   那时 DOMContentLoaded 早就过去了 —— 监听器永远不会触发，
+//   整个启动流程不跑。表现就是：悬浮窗口里三张卡片是空的、按钮也没反应，
+//   因为渲染循环、事件绑定全都没执行。
+//   （看起来「有内容」只是因为 HTML 结构被复制过去了，那是静态的。）
+function bootOverlay() {
     renderDebugPanel();
     // 调试面板占住右侧，把覆盖层往左推，避免互相遮挡
     const app = document.getElementById("app");
@@ -568,6 +576,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveChapterHistory();
     });
     setInterval(function () {
+        if (pipSuspended) return;   // 悬浮模式期间由悬浮窗口那份负责存档
         saveSession();
         saveChapterHistory();
     }, 12000);
@@ -580,10 +589,19 @@ document.addEventListener('DOMContentLoaded', () => {
          + (nDeaths ? " " + JSON.stringify(session.roomDeaths) : ""));
 
     bootIn();
+    // ⚠️ 放在 bootIn 之后，并且包 try/catch ——
+    //    悬浮按钮只是锦上添花，绝不能因为它把覆盖层的启动流程打断。
+    try { wireFloatButton(); } catch (e) { dlog("✗ 悬浮按钮初始化失败：" + e.message); }
     setInterval(tick, TICK_MS);
     requestAnimationFrame(timerLoop);
     tick();
-});
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootOverlay);
+} else {
+    bootOverlay();
+}
 
 // ===== tick 主循环：按顺序走完下面六步 =====
 //
@@ -597,6 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
 //   pollScene → reconcileSession → resolveGoldenMode / renderUpper
 //            → locateRoom → settleTiming → renderLower
 async function tick() {
+    if (pipSuspended) return;      // 悬浮模式下主窗口这份挂起（见 enterFloatMode）
     // ① 看场景：现在人在关卡里吗
     const scene = await pollScene();
     if (!scene.inLevel) {
@@ -1198,6 +1217,8 @@ function loadChapterHistory(chapterName) {
 }
 
 function timerLoop() {
+    // 悬浮模式下挂起：不再画，但继续排下一帧，还原时不用重新起循环
+    if (pipSuspended) { requestAnimationFrame(timerLoop); return; }
     updateTransition();
     updateRateTween();      // 成功率的数值补间
 
@@ -2564,3 +2585,163 @@ window.mcs = {
     // 调试辅助函数一旦带「清空数据」这种副作用，只要浏览器重放控制台命令就会反复触发。
     // 需要清空数据时，用 DevTools → Application → Session Storage → 右键 Clear。
 };
+
+
+// ===== 置顶悬浮模式（Document Picture-in-Picture）=====
+//
+// 给「不直播、只想自己看」的人用：点一下把覆盖层放进一个始终置顶的小窗口，
+// 可以拖动、可以缩放，同时还能看别的窗口。再点一下还原。
+//
+// ⚠️⚠️ 为什么不能把 #app 直接搬进悬浮窗口：
+//   全库有 50 多处 document.getElementById / querySelector，搬走之后主窗口
+//   就全查不到了，等于把覆盖层拆了。
+//   所以改成「复制 body 结构 → 在悬浮窗口里重新跑一遍脚本」，
+//   悬浮窗口里跑的是自己的一份完整实例。
+//
+// ⚠️ 悬浮窗口**不能被导航**（规范限制），所以也没法让那边直接打开本页面。
+
+let pipSuspended = false;       // 主窗口的循环是否被悬浮模式挂起
+let pipWindow = null;           // 悬浮窗口的 window 对象
+let pipIsFloatWindow = false;   // 当前这份实例是不是跑在悬浮窗口里
+
+function floatSupported() {
+    return typeof window.documentPictureInPicture !== "undefined"
+        && typeof window.documentPictureInPicture.requestWindow === "function";
+}
+
+
+async function enterFloatMode() {
+    if (pipWindow || pipIsFloatWindow) return;
+
+    let pip;
+    try {
+        pip = await window.documentPictureInPicture.requestWindow({ width: 620, height: 400 });
+    } catch (e) {
+        setNotice("悬浮窗口打开失败：" + (e && e.message ? e.message : e));
+        return;
+    }
+    // ⚠️⚠️ 先确认拿到的是「另一个窗口」。
+    //   实测 QQ 浏览器（极速内核）：requestWindow 会返回一个窗口对象，
+    //   但那个窗口和你看到的**不是同一个** —— 写进去的内容根本不显示，
+    //   结果只留一个空白的 about:blank 窗口，而且主界面已经被 .floating-out 变灰了。
+    //   所以这里必须先验，验不过就当不支持处理。
+    if (!pip || pip === window || !pip.document || pip.document === document) {
+        // ⚠️ 只有确实是「另一个窗口」才关 —— pip 可能就是主窗口，别把自己关了
+        try { if (pip && pip !== window && pip.close) pip.close(); } catch (e2) { /* 关不掉就算了 */ }
+        pipWindow = null;
+        document.body.classList.add("no-pip");     // 按钮也别再显示了
+        setNotice("这个浏览器不支持置顶悬浮窗口，请用 Chrome / Edge 116 以上版本打开本页面。");
+        dlog("✗ requestWindow 返回的不是独立窗口，判定为不支持");
+        return;
+    }
+
+    pipWindow = pip;
+
+    // ⚠️⚠️ 从这一步开始全部包在 try 里：一旦失败要**立刻把悬浮窗口关掉**，
+    //    否则会留一个空白窗口（标题是 about:blank），用户会以为程序卡住了。
+    try {
+        // ⚠️⚠️ 悬浮窗口里**直接放一个 iframe**，让它把覆盖层页面正常加载一遍。
+        //
+        //   为什么不「复制 body 结构 + 重跑脚本」（踩过的两个坑，都很难查）：
+        //     ① 脚本是在「页面已经加载完」之后追加进去的，DOMContentLoaded 早过去了，
+        //        启动流程根本不跑。界面**看着有内容**（那是复制过去的静态 HTML），
+        //        但渲染循环、事件绑定、样式类全都没执行 —— 于是任何改动都
+        //        「看起来没生效」，特别容易被误判成 CSS 写错了。
+        //     ② 复制过去的相对路径（Timing.js / CCTOverlay.css）在新文档里解析不了。
+        //
+        //   iframe 里是一次**正常的页面加载**，上面两个问题都不存在。
+        const frame = pip.document.createElement("iframe");
+        const base = new URL("CCTOverlay.html", document.baseURI).href;
+        frame.src = base + (base.indexOf("?") < 0 ? "?" : "&") + "mcsFloat=1";
+        frame.style.cssText =
+            "position:fixed;inset:0;width:100%;height:100%;border:0;display:block;";
+        pip.document.body.style.cssText =
+            "margin:0;padding:0;overflow:hidden;background:#0b0b0e;";
+        pip.document.body.appendChild(frame);
+    } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        try { pip.close(); } catch (e2) { /* 关不掉就算了 */ }
+        pipWindow = null;
+        setNotice("悬浮窗口里放不下覆盖层：" + msg);
+        dlog("✗ 悬浮模式失败：" + msg);
+        return;
+    }
+
+    // 主窗口挂起：停掉轮询，避免两个实例同时写 localStorage
+    pipSuspended = true;
+    document.body.classList.add("floating-out");
+    dlog("◆ 已进入悬浮模式，主窗口挂起");
+
+    pip.addEventListener("pagehide", function () {
+        pipWindow = null;
+        pipSuspended = false;
+        document.body.classList.remove("floating-out");
+        // 悬浮窗口跑过一段时间，主窗口这份的会话状态已经旧了 —— 重新加载最省心
+        // （数据都在 localStorage 里，不会丢）
+        location.reload();
+    });
+}
+
+function exitFloatMode() {
+    if (pipWindow) { pipWindow.close(); return; }
+    // 悬浮窗口里那份跑在 iframe 里，自己关不掉自己 —— 让父窗口关
+    if (pipIsFloatWindow) {
+        try {
+            const top = (window.parent && window.parent !== window) ? window.parent : window;
+            top.close();
+        } catch (e) { /* 跨域就算了 */ }
+    }
+}
+
+function wireFloatButton() {
+    // 悬浮窗口里是个 iframe，靠 URL 参数告诉它「你在悬浮窗口里」
+    pipIsFloatWindow = !!window.__mcsFloatWindow || /[?&]mcsFloat=1/.test(location.search);
+
+    // 悬浮窗口那份永远要显示按钮（用来「还原」）
+    if (!pipIsFloatWindow && !floatSupported()) {
+        document.body.classList.add("no-pip");    // OBS 的 CEF 走这里
+        return;
+    }
+
+    const btn = document.getElementById("float-btn");
+    const label = document.getElementById("float-btn-text");
+    if (!btn) return;
+
+    // ⚠️ 悬浮窗口里要做三件事（主窗口不做）：
+    //   ① 加 .pip-window 去掉白底（覆盖层平时故意没有背景色，OBS 里要透明）
+    //   ② 内容居中（不然窗口比内容高时，卡片全堆在顶上）
+    //   ③ 内容按窗口大小整体缩放 —— 这样「拖动窗口边缘」就能缩放内容，
+    //      不用去按 Ctrl+滚轮调浏览器缩放
+    if (pipIsFloatWindow) {
+        document.body.classList.add("pip-window");
+        fitFloatContent();
+        window.addEventListener("resize", fitFloatContent);
+        // 卡片高度会随内容变（一命模式、走势条），定期重算一下
+        setInterval(fitFloatContent, 800);
+    }
+
+    if (label) label.textContent = pipIsFloatWindow ? "还原" : "置顶悬浮";
+    btn.title = pipIsFloatWindow
+        ? "关掉悬浮窗口，回到浏览器页面里显示"
+        : "把覆盖层放进一个置顶小窗口（可以拖动、缩放）";
+
+    btn.addEventListener("click", function () {
+        if (pipIsFloatWindow) exitFloatMode();
+        else enterFloatMode();
+    });
+}
+
+// 悬浮窗口里：让覆盖层整体缩放，刚好放进窗口。
+// ⚠️ offsetWidth / offsetHeight 不受 transform 影响，所以量到的是「自然尺寸」，
+//    不会因为上一次缩放而越量越小。
+const FLOAT_SCALE_MAX = 1.6;
+function fitFloatContent() {
+    const app = document.getElementById("app");
+    if (!app) return;
+    const w = app.offsetWidth || 0;
+    const h = app.offsetHeight || 0;
+    if (!w || !h) return;
+    const scale = Math.min(window.innerWidth / w, window.innerHeight / h, FLOAT_SCALE_MAX);
+    // 贴着 1 的时候不写 transform，省得白加一层合成
+    app.style.transform = (Math.abs(scale - 1) < 0.005) ? "" : "scale(" + scale.toFixed(4) + ")";
+}

@@ -1109,18 +1109,19 @@ html, body {
 }
 
 /* ---- 7. 右侧总进度百分比 ---- */
-/* 固定宽度：数字从小数点后一位变化时（如 9.9% → 10.0%）不会挤动左边的方格 */
+/* 固定宽度：数字从小数点后一位变化时（如 9.9% → 10.0%）不会挤动左边的方格。
+   实测 "100.0%" 在 24px 下是 84px，加 10px 左内边距 → 96px 刚好放下。 */
 .progress-pct {
     flex: 0 0 auto;
-    width: 106px;
+    width: 96px;
     box-sizing: border-box;
     align-self: stretch;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding-left: 14px;
+    padding-left: 10px;
     border-left: 2px solid rgba(255,255,255,0.08);
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 800;
     line-height: 1;
     color: #4ecdc4;
@@ -1129,6 +1130,75 @@ html, body {
     text-shadow: 0 0 14px rgba(78,205,196,0.5);
     white-space: nowrap;
 }
-.progress-pct .unit { font-size: 16px; font-weight: 800; margin-left: 1px; color: #7adfd6; }
+.progress-pct .unit { font-size: 14px; font-weight: 800; margin-left: 1px; color: #7adfd6; }
 .progress-pct.full { color: #7ec98a; text-shadow: 0 0 16px rgba(126,201,138,0.75); }
 .progress-pct.full .unit { color: #a8e6b0; }
+
+
+/* ===== 置顶悬浮按钮 =====
+   给「不直播、只想自己看」的人用：点一下把覆盖层放进一个始终置顶的小窗口，
+   可以拖动、可以缩放，同时还能看别的窗口。再点一下还原。
+
+   ⚠️ 默认 opacity: 0，鼠标移到页面上才显出来 —— 直播时观众看不到它。
+      OBS 的浏览器源不支持 Document PiP，脚本会给 body 加 .no-pip 直接藏掉。 */
+#float-btn {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    z-index: 9999;
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(24, 24, 28, 0.86);
+    color: #ddd;
+    font: 500 12px/1.3 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    -webkit-user-select: none;
+    user-select: none;
+}
+body:hover #float-btn { opacity: 1; }
+#float-btn:hover {
+    background: rgba(42, 42, 48, 0.94);
+    border-color: rgba(255, 255, 255, 0.26);
+}
+#float-btn:active { transform: translateY(1px); }
+
+/* 浏览器不支持 / 正在悬浮 —— 都不显示 */
+body.no-pip #float-btn { display: none; }
+body.floating-out #float-btn { opacity: 0; pointer-events: none; }
+
+/* 悬浮模式期间，主窗口这份变暗：免得两个窗口都亮着，以为出错了 */
+body.floating-out #app {
+    opacity: 0.16;
+    filter: grayscale(1);
+    pointer-events: none;
+}
+
+
+/* ===== 悬浮窗口专属样式 =====
+   只在 Document PiP 窗口里生效（脚本给 body 加 .pip-window）。
+
+   ⚠️ 覆盖层平时**故意不设背景色** —— OBS 的浏览器源要透明，设了就会有底色。
+      但浏览器里默认是白底，悬浮窗口看起来就是「三张卡片漂在一片白上」。
+      所以这里只给悬浮窗口补一个深色底，主窗口不受影响。 */
+body.pip-window {
+    background: #0b0b0e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* 内容整体缩放时以中心为原点，配合上面的居中 */
+body.pip-window #app {
+    transform-origin: center center;
+    flex: 0 0 auto;
+    /* ⚠️⚠️ 必须把 #app 自带的 margin: 8vh auto 0 清掉。
+       那个 8vh 是给 OBS 用的（覆盖层往下挪一点），
+       但在悬浮窗口里会把 flex 居中的内容整体顶偏，看起来就是「上下没居中」。 */
+    margin: 0;
+}

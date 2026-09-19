@@ -2,6 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
+    <title>MapClearingStats</title>
     <link rel="stylesheet" href="CCTOverlay.css">
 </head>
 <body>
@@ -107,6 +108,14 @@
 
         <div class="notice" id="notice" style="display:none;"></div>
     </div>
+
+    <!-- 置顶悬浮：给「不直播、只想自己看」的人用。
+         默认几乎透明，鼠标移到页面上才显出来 —— 直播时观众看不到它。
+         ⚠️ 必须放在 body 里（脚本之前）：悬浮窗口是靠复制 body 结构 + 重跑脚本
+            建起来的，放 body 外面就复制不过去。 -->
+    <button id="float-btn" type="button">
+        <span id="float-btn-text">置顶悬浮</span>
+    </button>
     <script src="Timing.js"></script>
     <script src="CCTOverlay.js"></script>
 </body>
