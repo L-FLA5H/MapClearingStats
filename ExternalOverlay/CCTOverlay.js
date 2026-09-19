@@ -360,22 +360,22 @@ const CctClient = (function () {
     ];
 
     // ---- goldenType 映射 ----
-    // CCT 的取值约定（据 DLL 里的 GoldenType 字段）：0 = 没拿 / 未确定，1 = 金，2 = 银。
-    // ⚠️ 小闪反馈「带银时卡片没变银而是变金」—— 说明 CCT 报的 goldenType 可能一直是 0。
-    //    所以做成**多来源 + 容错**：
-    //      · 主来源 stats.chapterStats.goldenType
-    //      · 备用 state.modState.goldenType（实测 modState 里没这个字段，
-    //        但多读一处没有副作用，将来 CCT 补上了就能直接用）
-    //      · 任何 > 1 的值都按银处理（万一 CCT 用 3 表示银）
-    //
-    // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名猜：
+    // ⚠️⚠️ 映射关系是**实测**出来的（2026-09-16 探针日志），别再凭字段名或 DLL 文档猜：
     //     带银（Scroogle 章）      → goldenType = 1
     //     带金（ZZ-HeartSide 章）  → goldenType = 0
     //   而且它在**章节加载的那一刻就定下来了**（还没拿起草莓就已经是这个值），
     //   说明它是**章节级**属性，不是草莓级的。
-    //   → 所以：0 = 金，非 0 = 银。
-    // ⚠️ 之前写成「1 = 金、2 = 银」是错的，这正是小闪反馈
-    //    「带银时卡片没变银而是变金」的根因。
+    //   → 所以：**0 = 金，任何非 0 = 银**（含 2/3+，见下面的容错）。
+    //
+    //   历史注记：CCT 的 DLL 文档写的是「0 = 没拿 / 未确定，1 = 金，2 = 银」，
+    //   与实测相反。曾按 DLL 文档实现成「1 = 金、2 = 银」，
+    //   这正是小闪反馈「带银时卡片没变银而是变金」的根因。别再改回去。
+    //
+    //   多来源 + 容错：
+    //     · 主来源 stats.chapterStats.goldenType
+    //     · 备用 state.modState.goldenType（实测 modState 里没这个字段，
+    //       但多读一处没有副作用，将来 CCT 补上了就能直接用）
+    //     · 非 0 一律按银处理（万一 CCT 用 2/3 表示银也不会翻车）
     function goldenType(stats, state) {
         const a = (stats && stats.chapterStats) ? stats.chapterStats.goldenType : undefined;
         const b = (state && state.modState) ? state.modState.goldenType : undefined;
