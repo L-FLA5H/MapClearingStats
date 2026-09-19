@@ -4,14 +4,15 @@
 
 ---
 
-## 提 PR 之前：把这三套自检跑一遍
+## 提 PR 之前：把这四套自检跑一遍
 
 改动覆盖层之后，**先在本地跑通再提 PR**，能挡掉大部分低级错误：
 
 ```bash
-node tools/check-anim.js        # 55 条：渲染、动画、DOM 复用、走势条、进度小节、置顶悬浮
+node tools/check-anim.js        # 71 条：渲染、动画、DOM 复用、走势条、进度小节、金银文案、置顶悬浮
 node tools/check-timing.js      # 22 条：房间用时计时
-node tools/check-cctclient.js   # 32 条：CCT 字段映射与占位符表
+node tools/check-cctclient.js   # 33 条：CCT 字段映射与占位符表
+node tools/check-goldenmode.js  # 28 条：一命模式三态表与两条布局约束
 ```
 
 **依赖**：node + Edge（Chromium 内核，Windows 自带）。
@@ -24,9 +25,11 @@ node tools/check-cctclient.js   # 32 条：CCT 字段映射与占位符表
 
 | 改动 | 要跑/要看 |
 | --- | --- |
-| `ExternalOverlay/` 下的任何文件 | 三套全跑 |
+| `ExternalOverlay/` 下的任何文件 | 四套全跑 |
 | DOM 结构（加卡片、改 id/class） | 还要同步改 `tools/fixtures/anim_case.html` |
 | `CCTOverlay.js` 的 CctClient 分区 | `check-cctclient.js` 会校验切片标记和表顺序 |
+| `CCTOverlay.js` 的 GoldenMode 分区 | `check-goldenmode.js` 会校验三态字段、两条布局约束、文案是否又散落出去 |
+| 加一种新模式 | 在 `GOLDEN_MODE` 里加一条即可，各渲染函数不用逐个改；`hideRoomInfoRow` / `streakKeepWhenEmpty` 按新模式的布局定 |
 | 占位符表 | 同步 `tools/diag.ps1`（它是独立维护的，测试会校验它没漂移） |
 
 ---
@@ -40,9 +43,11 @@ node tools/check-cctclient.js   # 32 条：CCT 字段映射与占位符表
 
 2. **一命模式下 `.room-info-row` 必须无条件隐藏。**
    不要加「没走势数据就放出来」的兜底 —— 加过，反而出了 bug。
+   现在是 `GOLDEN_MODE` 里的 `hideRoomInfoRow: true` 字段，`check-goldenmode.js` 锁着它。
 
 3. **一命模式下走势条即使没数据也要保留整条**，且同样画满 20 个空位。
    换成文字会让这一行宽度跳动，而且第二张卡片会空白。
+   现在是 `GOLDEN_MODE` 里的 `streakKeepWhenEmpty: true` 字段，`check-goldenmode.js` 锁着它。
 
 4. **`goldenType` 是 `0 = 金`、`1 = 银`**，和直觉相反。
    统一走 `CctClient.goldenType()`，别在别处直接读字段。
