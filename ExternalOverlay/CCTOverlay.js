@@ -2609,28 +2609,6 @@ function floatSupported() {
         && typeof window.documentPictureInPicture.requestWindow === "function";
 }
 
-function copyStylesTo(targetDoc) {
-    // 逐条复制 CSS 规则（file:// 下 styleSheets 同源，能直接读 cssRules）。
-    // 读不到就退化成复制 <link> 标签。
-    for (const sheet of Array.from(document.styleSheets)) {
-        let cssText = "";
-        try {
-            cssText = Array.from(sheet.cssRules).map(r => r.cssText).join("\n");
-        } catch (e) {
-            if (sheet.href) {
-                const link = targetDoc.createElement("link");
-                link.rel = "stylesheet";
-                // ⚠️ 用绝对 URL —— 悬浮窗口文档的 base URL 解析不了相对路径
-                link.href = new URL(sheet.href, document.baseURI).href;
-                targetDoc.head.appendChild(link);
-            }
-            continue;
-        }
-        const style = targetDoc.createElement("style");
-        style.textContent = cssText;
-        targetDoc.head.appendChild(style);
-    }
-}
 
 async function enterFloatMode() {
     if (pipWindow || pipIsFloatWindow) return;
@@ -2662,29 +2640,24 @@ async function enterFloatMode() {
     // ⚠️⚠️ 从这一步开始全部包在 try 里：一旦失败要**立刻把悬浮窗口关掉**，
     //    否则会留一个空白窗口（标题是 about:blank），用户会以为程序卡住了。
     try {
-    copyStylesTo(pip.document);
-
-    // 只复制结构。innerHTML 插进去的 <script> 不会执行，所以脚本要单独加。
-    pip.document.body.innerHTML = document.body.innerHTML;
-
-    // 标记「这是悬浮窗口里的实例」
-    const flag = pip.document.createElement("script");
-    flag.textContent = "window.__mcsFloatWindow = true;";
-    pip.document.body.appendChild(flag);
-
-    // 再把脚本重新加载一遍。
-    // ⚠️ 路径要从当前页面已有的 <script src> 里取，别写死文件名 ——
-    //    部署时是 "Timing.js"，但自检夹具里是 "../../ExternalOverlay/Timing.js"。
-    // ⚠️ 用绝对 URL —— 悬浮窗口文档的 base URL 解析不了相对路径
-    const srcs = Array.from(document.querySelectorAll("script[src]"))
-        .map(function (el) { return new URL(el.getAttribute("src"), document.baseURI).href; })
-        .filter(Boolean);
-    srcs.forEach(function (src) {
-        const el = pip.document.createElement("script");
-        el.src = src;
-        pip.document.body.appendChild(el);
-    });
-
+        // ⚠️⚠️ 悬浮窗口里**直接放一个 iframe**，让它把覆盖层页面正常加载一遍。
+        //
+        //   为什么不「复制 body 结构 + 重跑脚本」（踩过的两个坑，都很难查）：
+        //     ① 脚本是在「页面已经加载完」之后追加进去的，DOMContentLoaded 早过去了，
+        //        启动流程根本不跑。界面**看着有内容**（那是复制过去的静态 HTML），
+        //        但渲染循环、事件绑定、样式类全都没执行 —— 于是任何改动都
+        //        「看起来没生效」，特别容易被误判成 CSS 写错了。
+        //     ② 复制过去的相对路径（Timing.js / CCTOverlay.css）在新文档里解析不了。
+        //
+        //   iframe 里是一次**正常的页面加载**，上面两个问题都不存在。
+        const frame = pip.document.createElement("iframe");
+        const base = new URL("CCTOverlay.html", document.baseURI).href;
+        frame.src = base + (base.indexOf("?") < 0 ? "?" : "&") + "mcsFloat=1";
+        frame.style.cssText =
+            "position:fixed;inset:0;width:100%;height:100%;border:0;display:block;";
+        pip.document.body.style.cssText =
+            "margin:0;padding:0;overflow:hidden;background:#0b0b0e;";
+        pip.document.body.appendChild(frame);
     } catch (e) {
         const msg = (e && e.message) ? e.message : String(e);
         try { pip.close(); } catch (e2) { /* 关不掉就算了 */ }
@@ -2711,11 +2684,18 @@ async function enterFloatMode() {
 
 function exitFloatMode() {
     if (pipWindow) { pipWindow.close(); return; }
-    if (pipIsFloatWindow) window.close();
+    // 悬浮窗口里那份跑在 iframe 里，自己关不掉自己 —— 让父窗口关
+    if (pipIsFloatWindow) {
+        try {
+            const top = (window.parent && window.parent !== window) ? window.parent : window;
+            top.close();
+        } catch (e) { /* 跨域就算了 */ }
+    }
 }
 
 function wireFloatButton() {
-    pipIsFloatWindow = !!window.__mcsFloatWindow;
+    // 悬浮窗口里是个 iframe，靠 URL 参数告诉它「你在悬浮窗口里」
+    pipIsFloatWindow = !!window.__mcsFloatWindow || /[?&]mcsFloat=1/.test(location.search);
 
     // 悬浮窗口那份永远要显示按钮（用来「还原」）
     if (!pipIsFloatWindow && !floatSupported()) {

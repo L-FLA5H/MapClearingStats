@@ -551,10 +551,11 @@ function check(name, ok, detail) {
         const fd = fake.document;
         out.suspended = pipSuspended;
         out.mainDimmed = document.body.classList.contains("floating-out");
-        out.clonedApp = !!fd.getElementById("app");
-        out.clonedCards = fd.querySelectorAll(".card").length;
-        out.styles = fd.querySelectorAll("style, link[rel=stylesheet]").length;
-        out.scripts = Array.from(fd.querySelectorAll("script[src]")).map(function(s){ return s.getAttribute("src"); });
+        const fr = fd.querySelector("iframe");
+        out.hasFrame = !!fr;
+        out.frameSrc = fr ? fr.getAttribute("src") : "";
+        out.frameFill = fr ? getComputedStyle(fr).position : "";
+        out.pipBodyBg = getComputedStyle(fd.body).backgroundColor;
         const lbl = fd.getElementById("float-btn-text");
         out.floatBtnLabel = lbl ? lbl.textContent : "(无)";
 
@@ -584,15 +585,9 @@ function check(name, ok, detail) {
     check('悬浮流程没有报错', !floatFlow.error, floatFlow.error || '');
     check('进入悬浮后主窗口挂起', floatFlow.suspended === true);
     check('主窗口那份变暗（提示已悬浮）', floatFlow.mainDimmed === true);
-    check('悬浮窗口里有完整的覆盖层结构',
-        floatFlow.clonedApp && floatFlow.clonedCards === 3,
-        'app=' + floatFlow.clonedApp + ' cards=' + floatFlow.clonedCards);
-    check('样式复制过去了', floatFlow.styles > 0, floatFlow.styles + ' 条');
     // ⚠️ iframe 代理有个限制：about:blank 里加载 file:// 子资源会被拦，
     //    所以「克隆出来的脚本真的跑起来了」这件事在测试里验不了（真实 PiP 窗口没这限制）。
     //    这里只验「脚本标签加对了没」，执行路径靠下面单独验按钮文案。
-    const srcs = floatFlow.scripts || [];
-    const added = srcs.filter(function (x) { return srcs.indexOf(x) === srcs.lastIndexOf(x); });
     check('悬浮窗口里按钮显示「还原」', floatFlow.mainLabelFloat === '还原',
         floatFlow.mainLabelBefore + ' → ' + floatFlow.mainLabelFloat);
     check('回到主窗口按钮又变回「置顶悬浮」', floatFlow.mainLabelBack === '置顶悬浮', floatFlow.mainLabelBack);
@@ -713,12 +708,18 @@ function check(name, ok, detail) {
     check('缩放以中心为原点（配合居中不会偏）',
         true, 'transform-origin: center center');
 
-    check('克隆结构里的脚本标签保留了（innerHTML 插的不会执行）', srcs.length >= 2,
-        JSON.stringify(srcs));
-    check('两个脚本被追加进悬浮窗口（路径从 DOM 取，没写死）',
-        srcs.filter(function (s) { return /Timing\.js$/.test(s); }).length >= 2 &&
-        srcs.filter(function (s) { return /CCTOverlay\.js$/.test(s); }).length >= 2,
-        JSON.stringify(srcs));
+    // ⚠️ 悬浮窗口里**不放复制出来的结构**，而是放一个 iframe 让它正常加载一遍。
+    //    （复制结构的方案踩过两个坑：脚本追加时 DOMContentLoaded 早过去了，
+    //      启动流程根本不跑；相对路径在新文档里也解析不了。见 CCTOverlay.js 的注释。）
+    check('悬浮窗口里放的是 iframe（不是复制出来的静态结构）',
+        floatFlow.hasFrame === true, 'hasFrame=' + floatFlow.hasFrame);
+    check('iframe 指向 CCTOverlay.html 并带悬浮标记',
+        /CCTOverlay\.html/.test(floatFlow.frameSrc || '') &&
+        /mcsFloat=1/.test(floatFlow.frameSrc || ''),
+        floatFlow.frameSrc);
+    check('iframe 铺满窗口', floatFlow.frameFill === 'fixed', floatFlow.frameFill);
+    check('悬浮窗口本身是深色底（iframe 加载完之前不闪白）',
+        floatFlow.pipBodyBg === 'rgb(11, 11, 14)', floatFlow.pipBodyBg);
 
 
     ws.close(); proc.kill();
