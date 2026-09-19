@@ -197,10 +197,6 @@ let session = loadSession();
 
 let lastShownTotalDeaths = 0;
 let lastShownRoomDeaths = 0;
-// 「第二张卡片右格」上一帧显示的数值。
-// 初见模式是毫秒计时（小数），一命模式是连续成功次数（整数），共用一个比较基准，
-// 用来判断「数值涨了」并播一次 bump 放大动画。
-let lastShownRoomTimeValue = 0;
 // 第二张卡片上一帧渲染时的房间名与模式。
 // ⚠️ 这两个是「要不要重绘第二张卡片」的判据 ——
 // renderRoomInfo 原来只在换房间时被调用，导致「在同一个房间拿起金草莓」
@@ -237,10 +233,9 @@ let transitionSeen = false;
 let pendingChapterRestart = false;
 // 恢复历史后，暂存「上次离开时所在的房间」，等拿到当前房间再判断进度有没有被重置
 let pendingResumeRoom = null;
-// 走势条：当前显示的是哪个房间 + 已经渲染了多少个点
-// （用来判断「有没有新的一次尝试」，只有新增才播弹出动画）
+// 走势条：当前显示的是哪个房间（换房间要重置弹出动画的判定，
+// 并把整条走势换成新房间数据——见 renderStreak 的 isNewRoom 分支）
 let lastStreakRoom = "";
-let lastStreakCount = -1;
 // 走势点序列的内容签名（如 "0011011"）。
 // ⚠️ 必须比对内容，不能只比对数量 —— 见 renderStreak 里的说明。
 let lastStreakSig = "";
@@ -249,7 +244,6 @@ let lastStreakSig = "";
 //    根因：initSession 把 session.roomDeaths 清成 {}、lastShownRoomDeaths 也归 0，
 //    于是 renderRoomInfo 的判据「房间没变 + 模式没变 + 死亡数没变」全部为假 →
 //    **直接 return，DOM 里还留着旧数字**。
-//    注意 displayedRoomDeaths 其实已经归 0 了，只是没人去写 DOM。
 let forceRoomInfoRefresh = false;
 // ⚠️⚠️ 刚重开章节 / 刚初始化后，detectDeaths 第一次只**记录基准**、不计数。
 //    小闪：「先在第一面自杀一次，重新开始章节，还是会有一次死亡，没清空」。
@@ -531,12 +525,6 @@ const GOLDEN_DROP_GRACE_MS = 500;
 let goldenDiedAt = 0;
 const GOLDEN_DEATH_HOLD_MS = 2500;   // 死亡后这段时间内不允许重新进入带金状态
 
-// 「本次挑战用时」的自算累积器。
-// CCT 的 timeSpentInRoomInRuns 是**单房间**累计，而且换个存档/重开就重置；
-// 想要「这一轮一命挑战总共打了多久」，只能自己边打边攒。
-let goldenRunSec = 0;
-let goldenRunTickAt = 0;
-
 // 每 tick 调用。返回 true 表示「模式刚发生变化，需要重绘 + 播切换动画」。
 function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
     // 换章节 → 重置，重新等这一次的「拿起草莓」
@@ -545,8 +533,6 @@ function updateGoldenMode(chapterName, goldenType, holdingGolden, diedNow) {
         goldenModeName = "normal";
         goldenDropAt = 0;
         goldenDiedAt = 0;
-        goldenRunSec = 0;
-        goldenRunTickAt = 0;
     }
 
     const gt = goldenType || 0;
@@ -823,7 +809,7 @@ function reconcileSession(state, path) {
         if (session.chapterName && session.chapterName === chapterName) {
             dlog("⟲ 重新开始此章节 → 用时、死亡数、房间进度全部清零");
             dstate("清零前");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
             saveChapterHistory();   // 把历史也覆盖成清空后的状态
             dstate("清零后");
         }
@@ -842,7 +828,7 @@ function reconcileSession(state, path) {
             saveSession();
         } else {
             dlog("  → 没有历史，新建会话（计时归零）");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
         }
         dstate("章节变化-改之后");
     }
@@ -861,7 +847,7 @@ function reconcileSession(state, path) {
             dlog("⟲ 进度没保留（上次离开在「" + prevRoom + "」，这次却从「"
                  + currentRoom + "」开始）→ 用时、死亡数、房间进度全部清零");
             dstate("清零前");
-            initSession(chapterName, path.path);
+            initSession(chapterName);
             saveChapterHistory();
             dstate("清零后");
         } else {
@@ -873,7 +859,7 @@ function reconcileSession(state, path) {
     return { hasPath, currentRoom };
 }
 
-// ③ 判定一命挑战模式（带金 / 带银），顺带累积「本次挑战用时」
+// ③ 判定一命挑战模式（带金 / 带银）
 function resolveGoldenMode(state, stats, currentRoom) {
     // 返回本次新增的死亡数 → 作为「刚刚死了」的信号传给一命模式判定，
     // 让它能立刻退出带金布局（不等 CCT 那个滞后 1 秒多的手持标志）。
@@ -892,21 +878,6 @@ function resolveGoldenMode(state, stats, currentRoom) {
     const goldenType = readGoldenType(stats, state);
     const goldenChanged = updateGoldenMode(
         state.chapterName || "", goldenType, snap.holdingGolden, diedNow);
-
-    // 「本次一命挑战累计用时」：只在真正带金挑战期间累积
-    // ⚠️ 模式刚在 updateGoldenMode 里更新过，这里取到的已是本 tick 的最新值
-    const mode = curGoldenMode();
-    const now = Date.now();
-    if (mode.challenge && !session.isPaused) {
-        if (goldenRunTickAt > 0) {
-            const dt = (now - goldenRunTickAt) / 1000;
-            // 卡顿超过 3 秒（切场景、最小化）不计入，防止一次性灌进来一大段时间
-            if (dt > 0 && dt < 3) goldenRunSec += dt;
-        }
-        goldenRunTickAt = now;
-    } else {
-        goldenRunTickAt = 0;
-    }
 
     return { diedNow, goldenChanged };
 }
@@ -1214,10 +1185,9 @@ function resumeTimer() {
     }
 }
 
-function initSession(chapterName, path) {
+function initSession(chapterName) {
     session = {
         chapterName: chapterName,
-        path: path,
         startTime: Date.now(),
         lastRoom: "",
         currentRoomEnterTime: Date.now(),
@@ -1240,8 +1210,6 @@ function initSession(chapterName, path) {
     stopPctAnim();
     displayedPct = 0;
     transition = null;
-    displayedRoomDeaths = 0;
-    displayedRoomTimeSec = 0;
     // 让下一次 renderRoomInfo 无条件重绘（见 forceRoomInfoRefresh 的注释）
     forceRoomInfoRefresh = true;
     resetRateTween();
@@ -1287,7 +1255,6 @@ function loadChapterHistory(chapterName) {
         const now = Timing.nowMs(session);
         return {
             chapterName: chapterName,
-            path: session.path,
             // 用「累计用时」反推开始时间戳，这样暂停/在别的图待的时间不会被算进来
             // （兼容旧格式：老数据存的是 startTime）
             startTime: (data.totalSec !== undefined)
@@ -1330,7 +1297,6 @@ function timerLoop() {
             const el2 = document.getElementById("room-time");
             const v = accumulated + currentStay;
             if (el2) el2.textContent = formatMS(v);
-            lastShownRoomTimeValue = v;
         }
     }
     requestAnimationFrame(timerLoop);
@@ -1992,7 +1958,6 @@ function renderStreak(state, valid, currentRoom, mode) {
             titleEl0.title = "本面还没有尝试记录";
         }
         lastStreakRoom = valid ? currentRoom : "";
-        lastStreakCount = -1;
         lastStreakSig = "";
         return;
     }
@@ -2045,7 +2010,6 @@ function renderStreak(state, valid, currentRoom, mode) {
                  (sig.length > lastStreakSig.length || shown.length >= STREAK_MAX_DOTS);
 
     lastStreakRoom = currentRoom;
-    lastStreakCount = shown.length;
     lastStreakSig = sig;
 
     // ⚠️ 小闪要求「对应位置保证只留 20 个方块」。
@@ -2162,9 +2126,7 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
     //    兜底把正确的布局顶掉了。第二张卡片空白的真正解法在 renderStreak 里
     //    （没数据时保留走势条、画满 20 个空位，见那边注释与 streakKeepWhenEmpty 字段）。
     show(".room-info-row", !mode.hideRoomInfoRow);
-    if (mode.hideRoomInfoRow) {
-        displayedRoomTimeSec = 0;
-    } else {
+    if (!mode.hideRoomInfoRow) {
         setLabel("blk1-label", "本面死亡");
         setIcon("blk1-icon", "💀");
         setLabel("blk2-label", "本面用时");
@@ -2175,11 +2137,9 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
         const rtReset = document.getElementById("room-time");
         if (rtReset) {
             rtReset.textContent = "00:00.000";
-            lastShownRoomTimeValue = 0;
         }
 
         const deaths = session.roomDeaths[currentRoom] || 0;
-        displayedRoomDeaths = deaths;
 
         const el = document.getElementById("room-deaths");
         if (el) {
@@ -2194,14 +2154,6 @@ function renderRoomInfo(state, valid, currentRoom, cpIndex, cp) {
             }
         }
         lastShownRoomDeaths = deaths;
-
-        if (valid && session.lastRoom && session.currentRoomEnterTime) {
-            const currentStay = Timing.currentRoomStaySec(session, Timing.nowMs(session));
-            const accumulated = session.roomTimes[session.lastRoom] || 0;
-            displayedRoomTimeSec = accumulated + currentStay;
-        } else {
-            displayedRoomTimeSec = 0;
-        }
     }
 
     const el2 = document.getElementById("room-name-inline");
@@ -2596,7 +2548,7 @@ function loadSession() {
         }
     } catch (e) {}
     return {
-        chapterName: "", path: null, startTime: 0, lastRoom: "",
+        chapterName: "", startTime: 0, lastRoom: "",
         currentRoomEnterTime: 0, roomTimes: {}, visitedRooms: {}, roomDeaths: {},
         lastCurDeaths: {}, isPaused: false, pauseStartTime: 0,
     };
