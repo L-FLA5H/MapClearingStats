@@ -25,8 +25,9 @@
 <div align="center">
 
 | 一命挑战（带金） | 一命挑战（带银） | 推图模式 |
-| :------: | :------: | :--: |
-| 一命挑战（带金） | 一命挑战（带银） | 推图模式 |
+| :---: | :---: | :---: |
+| ![一命挑战（带金）](docs/preview-gold.png) | ![一命挑战（带银）](docs/preview-silver.png) | ![推图模式](docs/preview-normal.png) |
+
 
 </div>
 
