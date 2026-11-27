@@ -790,6 +790,34 @@ function check(name, ok, detail) {
         floatFlow.pipBodyBg === 'rgb(11, 11, 14)', floatFlow.pipBodyBg);
 
 
+    // ============ ⑫ 状态卡文字必须「能说出是哪一环挂了」============
+    // 起因：有用户报「一直显示加载中」，排查了半天才知道是 LevelWatcher 没响应 ——
+    // 因为「在关卡里」「LevelWatcher 挂了」原来都会被说成「加载中」，三种情况一个词。
+    console.log('');
+    console.log('== ⑫ 状态卡文字的三态区分 ==');
+    const stText = JSON.parse(await ev(`JSON.stringify({
+        level:    getStatusText("Celeste.Level", true),
+        overworld:getStatusText("Celeste.Overworld", true),
+        noLw:     getStatusText("", false),
+        loading:  getStatusText("Celeste.LoadingScreen", true)
+    })`));
+    check('在关卡里 → 关卡中', stText.level === '关卡中', stText.level);
+    check('LevelWatcher 连不上 → 明确说「未响应」（不再说「加载中」）',
+        stText.noLw === 'LevelWatcher 未响应', stText.noLw);
+    check('主页面不受影响', stText.overworld === '主页面', stText.overworld);
+    check('真的在加载（Loader 场景）仍然是「加载中」',
+        stText.loading === '加载中', stText.loading);
+
+    // 静态检查真实 HTML：占位文字不能是「加载中」，否则「脚本一行没跑」会伪装成「游戏在加载」
+    const realHtml = fs.readFileSync(path.join(__dirname, '..', 'ExternalOverlay', 'CCTOverlay.html'), 'utf8');
+    check('HTML 占位文字不是「加载中」（区分「脚本没跑」）',
+        /id="status-value">未初始化</.test(realHtml) && !/id="status-value">加载中</.test(realHtml),
+        '占位=' + (realHtml.match(/id="status-value">([^<]*)</) || [])[1]);
+    check('HTML 有脚本错误兜底（脚本抛异常时不再安静地停在占位文字）',
+        /addEventListener\("error"/.test(realHtml));
+
+
+
     ws.close(); proc.kill();
 
     const failed = results.filter(r => !r.ok);

@@ -11,7 +11,13 @@
         <div id="status-overlay">
             <div class="status-box">
                 <span class="status-label">当前状态：</span>
-                <span class="status-value" id="status-value">加载中</span>
+                <!--
+                    ⚠️ 这里的占位文字是「脚本一行都没跑」时的样子，故意不写「加载中」：
+                       以前写「加载中」，而「加载中」也是正常脚本的一个合法状态，
+                       于是「脚本挂了」和「游戏在加载」显示得一模一样，用户和我们都分不清。
+                       现在三态可区分：未初始化 = 脚本没跑 / 脚本错误 = 抛异常 / 其余见 getStatusText
+                -->
+                <span class="status-value" id="status-value">未初始化</span>
             </div>
         </div>
 
@@ -116,6 +122,23 @@
     <button id="float-btn" type="button">
         <span id="float-btn-text">置顶悬浮</span>
     </button>
+    <!-- ⚠️ 必须排在 Timing.js / CCTOverlay.js 之前：一旦下面任何一个脚本抛异常
+         （版本不匹配、文件没拷全、语法错误），这里立刻把错误显示到状态卡上。
+         否则页面会安静地停在「未初始化」，看起来像是「游戏在加载」。 -->
+    <script>
+    window.addEventListener("error", function (e) {
+        var v = document.getElementById("status-value");
+        if (v) v.textContent = "脚本错误";
+        var o = document.getElementById("status-overlay");
+        if (o) o.classList.add("visible");
+        var n = document.getElementById("notice");
+        if (n) {
+            n.style.display = "block";
+            n.textContent = "脚本出错：" + (e && e.message ? e.message : "未知错误")
+                          + (e && e.filename ? "（" + e.filename.split("/").pop() + "）" : "");
+        }
+    });
+    </script>
     <script src="Timing.js"></script>
     <script src="CCTOverlay.js"></script>
 </body>

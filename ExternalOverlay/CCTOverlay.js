@@ -698,8 +698,13 @@ async function tick() {
     try {
         // ① 看场景：现在人在关卡里吗
         const scene = await pollScene();
+
+        // ⚠️ 状态文字**不在这里统一写**：在关卡里时 CCT 那边也会写自己的状态
+        //    （「CCT 未响应」），这里每轮都覆盖的话，两个词会每 500ms 来回闪，
+        //    反而把「CCT 未响应」这条有用信息冲掉。文字的维护权归各自的触发点。
+
         if (!scene.inLevel) {
-            handleOutsideLevel(scene.sceneType);
+            handleOutsideLevel(scene.sceneType, scene.lwReachable);
             return;
         }
 
@@ -733,6 +738,10 @@ async function pollScene() {
     let inLevel = false;
     let sceneType = "";
     let gamePaused = false;
+    // ⚠️ 单独记「LevelWatcher 到底连没连上」：连不上时 sceneType 是空串，
+    //    和「场景类型确实为空」没法区分，状态卡就只能含糊地写「加载中」。
+    //    有人报「一直显示加载中」时，就是卡在这一步分不清。
+    let lwReachable = true;
     try {
         const lw = await fetchJsonFrom(LEVEL_WATCHER);
         sceneType = lw.sceneType || "";
@@ -746,6 +755,7 @@ async function pollScene() {
         gamePaused = (lw.paused === true);
     } catch (e) {
         inLevel = false;
+        lwReachable = false;
     }
 
     // ⚠️⚠️ 「游戏内暂停也让计时停住」这个改动**已经撤销**（2026-09-16）。
@@ -780,7 +790,7 @@ async function pollScene() {
         dstate("场景变化");
     }
 
-    return { inLevel, sceneType, gamePaused };
+    return { inLevel, sceneType, gamePaused, lwReachable };
 }
 
 // ① 的出口之一：不在关卡内 → 存档、停表、显示状态卡
@@ -790,7 +800,7 @@ async function pollScene() {
 // ⚠️ 比较发生在 pauseTimer 之前：第一轮存的 totalSec 与旧口径一致（未暂停）。
 let lastOutsideSaveSig = null;
 
-function handleOutsideLevel(sceneType) {
+function handleOutsideLevel(sceneType, lwReachable) {
     const sig = JSON.stringify(session);
     if (sig !== lastOutsideSaveSig) {
         lastOutsideSaveSig = sig;
@@ -801,7 +811,7 @@ function handleOutsideLevel(sceneType) {
         saveSession();
     }
     pauseTimer();
-    showStatusCard(getStatusText(sceneType));
+    showStatusCard(getStatusText(sceneType, lwReachable));
 }
 
 // ⚠️ 瞬时失败去抖：原来任何一次请求失败都立刻打「CCT 未响应」状态卡，
@@ -1081,7 +1091,10 @@ function updateTransition() {
     }
 }
 
-function getStatusText(sceneType) {
+function getStatusText(sceneType, lwReachable) {
+    // LevelWatcher 没连上时，sceneType 必然是空串 —— 必须和「场景类型为空」分开说，
+    // 否则用户看到的永远是「加载中」，连排查方向都没有。
+    if (lwReachable === false) return "LevelWatcher 未响应";
     if (!sceneType) return "加载中";
     if (sceneType === "Celeste.Overworld") return "主页面";
     if (sceneType === "Celeste.Editor") return "编辑器";
