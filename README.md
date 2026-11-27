@@ -442,10 +442,9 @@ OBS 的浏览器源加载 `file://` 页面时，会禁掉页面里发出的请�
 
 ## 历代版本
 
-> **v0.4.1** 修了「OBS 里一直显示加载中」：OBS 的浏览器源会拦掉 `file://` 页面里的请求，  
-> 现在覆盖层也可以由 LevelWatcher 用 http 提供（OBS 里填 `http://localhost:32271/overlay/`）。  
-> 另外状态卡能说清是**哪一环**出了问题（在关卡里 / LevelWatcher 未响应 / 脚本没跑 / 脚本报错，  
-> 原来都显示成同一个「加载中」）。功能没有变化。详见 [Release notes](docs/release-notes-v0.4.1.md)。
+> **v0.4.1** 修了「OBS 里一直显示加载中」（改由 LevelWatcher 用 http 提供页面），  
+> 状态卡也能说清是哪一环出了问题。功能没有变化。  
+> 详见 [Release notes](docs/release-notes-v0.4.1.md)。
 
 > **v0.4.0** 新增**置顶悬浮**功能（不直播时用的置顶小窗口，可拖动缩放）；  
 >   
