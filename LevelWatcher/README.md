@@ -4,7 +4,9 @@
 
 ## 它做什么
 
-只做一件事：在本机 `32271` 端口起一个极简的 HTTP 服务，返回当前游戏场景的类型。
+两件事，都在本机 `32271` 端口：
+
+**① 返回当前场景类型**（覆盖层靠它判断「人在不在地图里」）
 
 ```
 GET http://localhost:32271/
@@ -12,6 +14,20 @@ GET http://localhost:32271/
 ```
 
 玩家在关卡内时返回 `Celeste.Level`，在主页面、加载界面等任何其他场景下返回对应的类型名（例如 `Celeste.Overworld`）。
+
+**② 把覆盖层本身也用 http 发出去**（v0.4.0 起）
+
+```
+GET http://localhost:32271/overlay/
+→ CCTOverlay.html（以及同目录下的 .js / .css）
+```
+
+文件读的是 `<Celeste>\ConsistencyTracker\external-tools\ExternalOverlay\`，不复制、不搬家。
+
+> **为什么需要这条**：OBS 的浏览器源（CEF）加载 `file://` 页面时，会**禁掉页面里发出的请求**。
+> 于是同一个 `CCTOverlay.html` 在 Chrome 里正常、放进 OBS 就永远显示「加载中」。
+> 从 http 地址打开，页面和接口同源，就没有这个问题 —— OBS 里填
+> `http://localhost:32271/overlay/` 即可。
 
 ## 为什么需要它？
 

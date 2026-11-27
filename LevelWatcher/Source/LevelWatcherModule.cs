@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -89,13 +90,20 @@ public class LevelWatcherModule : EverestModule {
 
     private void ProcessRequest(HttpListenerContext context) {
         var response = context.Response;
+
+        response.AddHeader("Access-Control-Allow-Origin", "*");
+        // 防 OBS/CEF 缓存旧响应——覆盖层每 500ms 轮询本接口，
+        // 静态文件同理（改了覆盖层按一次刷新就该看到新的）
+        response.AddHeader("Cache-Control", "no-store");
+
+        // /overlay/… 交给 OverlayServer —— 那里解释了为什么覆盖层也要走 http
+        if (OverlayServer.TryHandle(context, context.Request.Url?.AbsolutePath)) {
+            return;
+        }
+
         var scene = Engine.Scene;
         string sceneType = scene?.GetType().FullName ?? "null";
         bool paused = IsScenePaused(scene);
-
-        response.AddHeader("Access-Control-Allow-Origin", "*");
-        // 防 OBS/CEF 缓存旧响应——覆盖层每 500ms 轮询本接口
-        response.AddHeader("Cache-Control", "no-store");
 
         string json = "{\"sceneType\":\"" + sceneType + "\",\"paused\":" + (paused ? "true" : "false") + "}";
         byte[] buffer = Encoding.UTF8.GetBytes(json);
