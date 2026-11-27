@@ -1088,6 +1088,9 @@ function getStatusText(sceneType) {
     if (sceneType === "Celeste.TitleScreen") return "标题画面";
     if (sceneType === "Celeste.Oui") return "菜单";
     if (sceneType.indexOf("Loader") >= 0) return "加载中";
+    // ⚠️ 以前这里直接 return "加载中" —— Celeste.Level（在关卡里）会掉到这一行，
+    //    于是「在关卡里」和「LevelWatcher 没响应」显示的是同一个状态，完全分不清。
+    if (sceneType === "Celeste.Level") return "关卡中";
     return "加载中";
 }
 
